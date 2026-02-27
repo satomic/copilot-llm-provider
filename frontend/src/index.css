@@ -1,0 +1,100 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/*
+ * Design tokens — GitHub Primer-inspired palette.
+ * Values are space-separated RGB channels so Tailwind opacity modifiers work.
+ * e.g. bg-canvas, bg-surface/80, text-fg, text-accent/50
+ */
+:root {
+  /* Backgrounds (3-tier hierarchy) */
+  --color-canvas: 255 255 255;
+  --color-surface: 246 248 250;
+  --color-overlay: 234 238 242;
+
+  /* Border */
+  --color-edge: 208 215 222;
+
+  /* Foreground / text */
+  --color-fg: 31 35 40;
+  --color-fg-secondary: 101 109 118;
+  --color-fg-muted: 140 149 159;
+
+  /* Accent (primary blue) */
+  --color-accent: 9 105 218;
+  --color-accent-hover: 5 80 174;
+
+  /* Semantic */
+  --color-success: 26 127 55;
+  --color-warning: 154 103 0;
+  --color-danger: 207 34 46;
+}
+
+.dark {
+  --color-canvas: 13 17 23;
+  --color-surface: 22 27 34;
+  --color-overlay: 33 38 45;
+
+  --color-edge: 48 54 61;
+
+  --color-fg: 230 237 243;
+  --color-fg-secondary: 139 148 158;
+  --color-fg-muted: 110 118 129;
+
+  --color-accent: 88 166 255;
+  --color-accent-hover: 121 192 255;
+
+  --color-success: 63 185 80;
+  --color-warning: 210 153 34;
+  --color-danger: 248 81 73;
+}
+
+/* Scrollbar */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: rgb(var(--color-edge));
+  border-radius: 3px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: rgb(var(--color-fg-muted));
+}
+
+/* Color-scheme */
+html {
+  color-scheme: light;
+}
+
+html.dark {
+  color-scheme: dark;
+}
+
+/* Base styles */
+body {
+  background: rgb(var(--color-canvas));
+  color: rgb(var(--color-fg));
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif;
+}
+
+a, button, input, textarea, select {
+  @apply transition-all duration-150;
+}
+
+pre, code {
+  font-family: 'SF Mono', 'Fira Code', 'Cascadia Code', Menlo, Consolas, monospace;
+}
+
+textarea {
+  resize: none;
+}
