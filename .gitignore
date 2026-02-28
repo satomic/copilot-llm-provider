@@ -213,4 +213,8 @@ node_modules/
 AGENTS.md
 .github
 docker
+.env.development
+
+# Runtime data (sessions, config, usage stats)
+data/
 

@@ -92,6 +92,7 @@ export interface ModelObject {
   object: "model";
   created: number;
   owned_by: string;
+  billing_multiplier?: number | null;
 }
 
 /** OpenAI Models list response. */

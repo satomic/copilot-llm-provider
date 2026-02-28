@@ -1,5 +1,6 @@
 import { useState, useCallback } from "react";
 import { useI18n } from "@/contexts/I18nContext";
+import { copyToClipboard } from "@/utils/clipboard";
 
 interface CodeBlockProps {
   code: string;
@@ -14,9 +15,11 @@ export default function CodeBlock({ code, language }: CodeBlockProps) {
   const { t } = useI18n();
 
   const handleCopy = useCallback(() => {
-    navigator.clipboard.writeText(code).then(() => {
-      setCopied(true);
-      setTimeout(() => setCopied(false), 2000);
+    copyToClipboard(code).then((ok) => {
+      if (ok) {
+        setCopied(true);
+        setTimeout(() => setCopied(false), 2000);
+      }
     });
   }, [code]);
 
@@ -29,8 +32,11 @@ export default function CodeBlock({ code, language }: CodeBlockProps) {
         </span>
         <button
           onClick={handleCopy}
-          className="text-[11px] text-fg-muted hover:text-fg px-2 py-0.5 rounded-md
-            hover:bg-surface"
+          className={`text-[11px] px-2 py-0.5 rounded-md transition-colors ${
+            copied
+              ? "text-success bg-success/10"
+              : "text-fg-muted hover:text-fg hover:bg-surface"
+          }`}
         >
           {copied ? t("settings.copied") : t("settings.copy")}
         </button>

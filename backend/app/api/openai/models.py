@@ -11,7 +11,7 @@ import time
 from fastapi import APIRouter, Depends
 from fastapi.responses import JSONResponse
 
-from backend.app.core.auth import verify_api_key
+from backend.app.core.auth import AuthInfo, verify_api_key
 from backend.app.core.dependencies import get_provider
 from backend.app.providers.base import Provider
 from backend.app.schemas.openai import (
@@ -35,7 +35,7 @@ router = APIRouter()
 )
 async def list_models(
     provider: Provider = Depends(get_provider),
-    _api_key: str | None = Depends(verify_api_key),
+    _auth: AuthInfo = Depends(verify_api_key),
 ):
     """List available models in OpenAI format.
 
@@ -73,6 +73,7 @@ async def list_models(
             id=model.id,
             created=created,
             owned_by=model.provider,
+            billing_multiplier=model.billing_multiplier,
         )
         for model in models
     ]

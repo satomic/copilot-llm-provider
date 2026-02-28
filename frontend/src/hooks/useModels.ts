@@ -15,7 +15,7 @@ interface UseModelsReturn {
  * Automatically fetches on mount and exposes a refresh function.
  */
 export function useModels(): UseModelsReturn {
-  const { apiKey } = useAuth();
+  const { token } = useAuth();
   const [models, setModels] = useState<ModelObject[]>([]);
   const [loading, setLoading] = useState<boolean>(true);
   const [error, setError] = useState<string | null>(null);
@@ -24,7 +24,7 @@ export function useModels(): UseModelsReturn {
     setLoading(true);
     setError(null);
 
-    fetchModels(apiKey)
+    fetchModels(token)
       .then((data) => {
         setModels(data.data);
       })
@@ -35,7 +35,7 @@ export function useModels(): UseModelsReturn {
       .finally(() => {
         setLoading(false);
       });
-  }, [apiKey]);
+  }, [token]);
 
   useEffect(() => {
     refresh();

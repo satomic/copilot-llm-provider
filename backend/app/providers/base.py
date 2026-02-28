@@ -128,11 +128,14 @@ class ModelInfo:
         id: Unique model identifier (e.g., "gpt-4.1", "claude-sonnet-4").
         name: Human-readable display name for the model.
         provider: The provider that serves this model (e.g., "copilot").
+        is_premium: Whether this model consumes premium requests (based on billing multiplier).
     """
 
     id: str
     name: str
     provider: str
+    is_premium: bool = True  # default to premium (safer assumption)
+    billing_multiplier: float | None = None
 
 
 # =============================================================================
@@ -180,6 +183,22 @@ class Provider(ABC):
         Must not raise exceptions — log errors instead.
         """
         ...
+
+    async def is_model_premium(self, model_id: str) -> bool:
+        """Check whether a model consumes premium requests.
+
+        Default returns True (safer assumption). Concrete providers should
+        override to use billing multiplier from the SDK.
+        """
+        return True
+
+    async def get_model_multiplier(self, model_id: str) -> float:
+        """Get the billing multiplier for a model.
+
+        Default returns 1.0. Concrete providers should override to return
+        the actual multiplier from the SDK.
+        """
+        return 1.0
 
     @abstractmethod
     async def list_models(self) -> list[ModelInfo]:

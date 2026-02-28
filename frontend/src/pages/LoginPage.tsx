@@ -1,44 +1,62 @@
-import { useState, useCallback, type FormEvent } from "react";
+import { useState, useCallback, useEffect, type FormEvent } from "react";
 import { useNavigate } from "react-router-dom";
 import { useAuth } from "@/contexts/AuthContext";
 import { useTheme } from "@/contexts/ThemeContext";
 import { useI18n } from "@/contexts/I18nContext";
-import { healthCheck } from "@/services/api";
+import { getBaseUrl } from "@/utils/baseUrl";
 
-/**
- * Login page — centered card where the user enters an API key (or leaves empty for no-auth mode).
- * Validates the connection by calling /health before redirecting to /dashboard.
- */
 export default function LoginPage() {
   const navigate = useNavigate();
   const { login } = useAuth();
   const { theme, toggleTheme } = useTheme();
   const { t, locale, toggleLocale } = useI18n();
-  const [apiKey, setApiKey] = useState("");
+  const [username, setUsername] = useState("");
+  const [password, setPassword] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [hasUsers, setHasUsers] = useState<boolean | null>(null);
+
+  useEffect(() => {
+    fetch("/api/auth/status")
+      .then((r) => r.json())
+      .then((data) => setHasUsers(data.has_users))
+      .catch(() => setHasUsers(false));
+  }, []);
+
+  const isRegister = hasUsers === false;
 
   const handleSubmit = useCallback(
     async (e: FormEvent) => {
       e.preventDefault();
+      if (!username.trim() || !password.trim()) return;
       setLoading(true);
       setError(null);
 
       try {
-        const ok = await healthCheck(apiKey);
-        if (ok) {
-          login(apiKey);
-          navigate("/dashboard");
-        } else {
-          setError(t("login.error.connection"));
+        const endpoint = isRegister ? "/api/auth/register" : "/api/auth/login";
+        const response = await fetch(endpoint, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ username: username.trim(), password }),
+        });
+
+        if (!response.ok) {
+          const data = await response.json().catch(() => null);
+          const msg = data?.detail || `HTTP ${response.status}`;
+          setError(typeof msg === "string" ? msg : JSON.stringify(msg));
+          return;
         }
+
+        const data = await response.json();
+        login(data.token, data.username);
+        navigate("/dashboard");
       } catch {
         setError(t("login.error.failed"));
       } finally {
         setLoading(false);
       }
     },
-    [apiKey, login, navigate, t]
+    [username, password, isRegister, login, navigate, t]
   );
 
   return (
@@ -82,63 +100,97 @@ export default function LoginPage() {
           </p>
         </div>
 
-        {/* Login card */}
+        {/* Login / Register card */}
         <form
           onSubmit={handleSubmit}
           className="bg-surface border border-edge rounded-lg p-5 space-y-4"
         >
-          <div>
-            <label
-              htmlFor="api-key"
-              className="block text-xs font-medium text-fg-secondary mb-1.5 uppercase tracking-wide"
-            >
-              {t("login.apiKey")}
-            </label>
-            <input
-              id="api-key"
-              type="password"
-              value={apiKey}
-              onChange={(e) => setApiKey(e.target.value)}
-              placeholder={t("login.placeholder")}
-              className="w-full bg-canvas border border-edge text-fg rounded-md px-3 py-2 text-sm
-                placeholder-fg-muted focus:outline-none focus:ring-1 focus:ring-accent focus:border-accent"
-            />
-            <p className="text-[11px] text-fg-muted mt-1.5">
-              {t("login.hint")}
-            </p>
-          </div>
-
-          {/* Error message */}
-          {error && (
-            <div className="bg-danger/8 border border-danger/20 text-danger text-[13px] rounded-md px-3 py-2.5">
-              {error}
+          {hasUsers === null ? (
+            <div className="text-center py-4 text-xs text-fg-muted">
+              {t("sessions.loading")}
             </div>
-          )}
+          ) : (
+            <>
+              <div className="text-center mb-2">
+                <h2 className="text-sm font-semibold text-fg">
+                  {isRegister ? t("login.createAccount") : t("login.signIn")}
+                </h2>
+                <p className="text-[11px] text-fg-muted mt-1">
+                  {isRegister ? t("login.createAccountHint") : t("login.signInHint")}
+                </p>
+              </div>
 
-          <button
-            type="submit"
-            disabled={loading}
-            className="w-full bg-accent hover:bg-accent-hover disabled:opacity-50 disabled:cursor-not-allowed
-              text-white font-medium py-2 rounded-md text-sm"
-          >
-            {loading ? (
-              <span className="flex items-center justify-center gap-2">
-                <svg className="animate-spin h-4 w-4" viewBox="0 0 24 24">
-                  <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none" />
-                  <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
-                </svg>
-                {t("login.connecting")}
-              </span>
-            ) : (
-              t("login.connect")
-            )}
-          </button>
+              <div>
+                <label
+                  htmlFor="username"
+                  className="block text-xs font-medium text-fg-secondary mb-1.5 uppercase tracking-wide"
+                >
+                  {t("login.username")}
+                </label>
+                <input
+                  id="username"
+                  type="text"
+                  value={username}
+                  onChange={(e) => setUsername(e.target.value)}
+                  placeholder={t("login.usernamePlaceholder")}
+                  autoComplete="username"
+                  className="w-full bg-canvas border border-edge text-fg rounded-md px-3 py-2 text-sm
+                    placeholder-fg-muted focus:outline-none focus:ring-1 focus:ring-accent focus:border-accent"
+                />
+              </div>
+
+              <div>
+                <label
+                  htmlFor="password"
+                  className="block text-xs font-medium text-fg-secondary mb-1.5 uppercase tracking-wide"
+                >
+                  {t("login.password")}
+                </label>
+                <input
+                  id="password"
+                  type="password"
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  placeholder={t("login.passwordPlaceholder")}
+                  autoComplete={isRegister ? "new-password" : "current-password"}
+                  className="w-full bg-canvas border border-edge text-fg rounded-md px-3 py-2 text-sm
+                    placeholder-fg-muted focus:outline-none focus:ring-1 focus:ring-accent focus:border-accent"
+                />
+              </div>
+
+              {error && (
+                <div className="bg-danger/10 border border-danger/20 text-danger text-[13px] rounded-md px-3 py-2.5">
+                  {error}
+                </div>
+              )}
+
+              <button
+                type="submit"
+                disabled={loading || !username.trim() || !password.trim()}
+                className="w-full bg-accent hover:bg-accent-hover disabled:opacity-50 disabled:cursor-not-allowed
+                  text-white font-medium py-2 rounded-md text-sm"
+              >
+                {loading ? (
+                  <span className="flex items-center justify-center gap-2">
+                    <svg className="animate-spin h-4 w-4" viewBox="0 0 24 24">
+                      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none" />
+                      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
+                    </svg>
+                    {t("login.connecting")}
+                  </span>
+                ) : isRegister ? (
+                  t("login.createAccount")
+                ) : (
+                  t("login.signIn")
+                )}
+              </button>
+            </>
+          )}
         </form>
 
-        {/* Footer info */}
         <p className="text-center text-[11px] text-fg-muted mt-5">
           {t("login.footer")}{" "}
-          <code className="text-fg-secondary">http://localhost:8000</code>
+          <code className="text-fg-secondary">{getBaseUrl()}</code>
         </p>
       </div>
     </div>

@@ -5,7 +5,10 @@ import { I18nProvider } from "@/contexts/I18nContext";
 import LoginPage from "@/pages/LoginPage";
 import DashboardPage from "@/pages/DashboardPage";
 import PlaygroundPage from "@/pages/PlaygroundPage";
+import ToolConfigPage from "@/pages/ToolConfigPage";
+import SessionsPage from "@/pages/SessionsPage";
 import SettingsPage from "@/pages/SettingsPage";
+import ApiReferencePage from "@/pages/ApiReferencePage";
 import type { ReactNode } from "react";
 
 function ProtectedRoute({ children }: { children: ReactNode }) {
@@ -37,6 +40,30 @@ function App() {
                 element={
                   <ProtectedRoute>
                     <PlaygroundPage />
+                  </ProtectedRoute>
+                }
+              />
+              <Route
+                path="/tools"
+                element={
+                  <ProtectedRoute>
+                    <ToolConfigPage />
+                  </ProtectedRoute>
+                }
+              />
+              <Route
+                path="/sessions"
+                element={
+                  <ProtectedRoute>
+                    <SessionsPage />
+                  </ProtectedRoute>
+                }
+              />
+              <Route
+                path="/api-reference"
+                element={
+                  <ProtectedRoute>
+                    <ApiReferencePage />
                   </ProtectedRoute>
                 }
               />

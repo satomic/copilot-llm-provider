@@ -213,6 +213,10 @@ class ModelObject(BaseModel):
         default="copilot",
         description="The organization that owns the model.",
     )
+    billing_multiplier: float | None = Field(
+        default=None,
+        description="Billing multiplier from the SDK. >1 means premium.",
+    )
 
 
 class ModelList(BaseModel):

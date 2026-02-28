@@ -11,6 +11,8 @@ the clean async Provider interface. Handles:
 
 import asyncio
 import logging
+import re
+import time
 from collections.abc import AsyncGenerator
 from uuid import uuid4
 
@@ -52,6 +54,22 @@ def _format_messages(messages: list[ChatMessage]) -> str:
     return "\n".join(parts)
 
 
+def _normalize_model_name(name: str) -> str:
+    """Normalize a model name for fuzzy matching.
+
+    1. Strip Anthropic-style date suffix (e.g., -20250514)
+    2. Replace digit-dash-digit with digit.digit for version numbers
+       (e.g., claude-sonnet-4-5 → claude-sonnet-4.5)
+    """
+    normalized = re.sub(r"-\d{8}$", "", name)
+    normalized = re.sub(r"(\d+)-(\d+)", r"\1.\2", normalized)
+    return normalized.lower()
+
+
+# Cache TTL for model IDs used by the resolver (seconds).
+_MODEL_CACHE_TTL = 300.0
+
+
 class CopilotProvider(Provider):
     """LLM provider backed by GitHub Copilot via the github-copilot-sdk.
 
@@ -67,6 +85,11 @@ class CopilotProvider(Provider):
         self._github_token = github_token
         self._client: CopilotClient | None = None
         self._started: bool = False
+        # Model name resolution cache
+        self._model_ids_cache: list[str] = []
+        self._model_premium_cache: dict[str, bool] = {}
+        self._model_multiplier_cache: dict[str, float] = {}
+        self._model_ids_cache_ts: float = 0.0
 
     async def start(self) -> None:
         """Start the CopilotClient and verify authentication.
@@ -174,14 +197,89 @@ class CopilotProvider(Provider):
                 if model_name is None:
                     model_name = model_id
 
+                # Extract billing multiplier to determine premium status.
+                # multiplier > 1 means the model consumes premium requests.
+                billing = getattr(raw, "billing", None)
+                multiplier = getattr(billing, "multiplier", None) if billing else None
+                if multiplier is None and isinstance(raw, dict):
+                    billing_dict = raw.get("billing")
+                    if isinstance(billing_dict, dict):
+                        multiplier = billing_dict.get("multiplier")
+                is_premium = multiplier is not None and multiplier > 0
+
                 models.append(
-                    ModelInfo(id=model_id, name=model_name, provider="copilot")
+                    ModelInfo(
+                        id=model_id,
+                        name=model_name,
+                        provider="copilot",
+                        is_premium=is_premium,
+                        billing_multiplier=multiplier,
+                    )
                 )
             except Exception:
                 logger.warning("Skipping unparseable model object: %r", raw, exc_info=True)
 
         logger.info("Discovered %d models from Copilot", len(models))
         return models
+
+    async def is_model_premium(self, model_id: str) -> bool:
+        """Check whether a model is premium based on billing multiplier from the SDK."""
+        await self._get_model_ids()  # ensure cache is populated
+        return self._model_premium_cache.get(model_id, True)  # default True (safer)
+
+    async def get_model_multiplier(self, model_id: str) -> float:
+        """Get the billing multiplier for a model from the SDK cache."""
+        await self._get_model_ids()  # ensure cache is populated
+        return self._model_multiplier_cache.get(model_id, 1.0)
+
+    async def _get_model_ids(self) -> list[str]:
+        """Return cached list of available model IDs."""
+        now = time.monotonic()
+        if self._model_ids_cache and (now - self._model_ids_cache_ts) < _MODEL_CACHE_TTL:
+            return self._model_ids_cache
+        try:
+            models = await self.list_models()
+            self._model_ids_cache = [m.id for m in models]
+            self._model_premium_cache = {m.id: m.is_premium for m in models}
+            self._model_multiplier_cache = {
+                m.id: (m.billing_multiplier if m.billing_multiplier is not None else 0.0)
+                for m in models
+            }
+            self._model_ids_cache_ts = now
+        except Exception:
+            logger.warning("Failed to refresh model ID cache for resolver")
+        return self._model_ids_cache
+
+    async def _resolve_model(self, requested: str) -> str:
+        """Resolve a requested model name to an available Copilot model.
+
+        Tries exact match first, then normalized matching (strip date suffix,
+        normalize version separators), then prefix matching. Falls through
+        to the original name if no match is found.
+        """
+        available = await self._get_model_ids()
+        if not available:
+            return requested
+
+        # 1. Exact match
+        if requested in available:
+            return requested
+
+        # 2. Normalized match
+        req_norm = _normalize_model_name(requested)
+        for model_id in available:
+            if _normalize_model_name(model_id) == req_norm:
+                logger.info("Model resolved: %s → %s", requested, model_id)
+                return model_id
+
+        # 3. Prefix match (e.g., "claude-sonnet" matches "claude-sonnet-4.5")
+        for model_id in available:
+            if _normalize_model_name(model_id).startswith(req_norm):
+                logger.info("Model resolved (prefix): %s → %s", requested, model_id)
+                return model_id
+
+        logger.warning("Model %s not found in available models %s, passing through", requested, available)
+        return requested
 
     async def chat_completion(
         self, request: ChatCompletionRequest
@@ -202,9 +300,11 @@ class CopilotProvider(Provider):
             len(prompt),
         )
 
+        resolved_model = await self._resolve_model(request.model)
+
         session = None
         try:
-            session = await client.create_session({"model": request.model})
+            session = await client.create_session({"model": resolved_model})
             response = await session.send_and_wait({"prompt": prompt})
 
             # Extract content from the SDK response object.
@@ -277,10 +377,12 @@ class CopilotProvider(Provider):
 
         queue: asyncio.Queue[StreamDelta | object] = asyncio.Queue()
 
+        resolved_model = await self._resolve_model(request.model)
+
         session = None
         try:
             session = await client.create_session(
-                {"model": request.model, "streaming": True}
+                {"model": resolved_model, "streaming": True}
             )
 
             def on_event(event: object) -> None:

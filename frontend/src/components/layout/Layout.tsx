@@ -14,7 +14,7 @@ interface LayoutProps {
  * Provides sidebar navigation, top bar, and the content area.
  */
 export default function Layout({ title, children }: LayoutProps) {
-  const { apiKey } = useAuth();
+  const { token } = useAuth();
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [connected, setConnected] = useState(false);
 
@@ -23,7 +23,7 @@ export default function Layout({ title, children }: LayoutProps) {
     let cancelled = false;
 
     const check = async () => {
-      const ok = await healthCheck(apiKey);
+      const ok = await healthCheck(token);
       if (!cancelled) setConnected(ok);
     };
 
@@ -34,7 +34,7 @@ export default function Layout({ title, children }: LayoutProps) {
       cancelled = true;
       clearInterval(interval);
     };
-  }, [apiKey]);
+  }, [token]);
 
   return (
     <div className="flex h-screen bg-canvas overflow-hidden">

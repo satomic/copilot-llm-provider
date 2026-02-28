@@ -3,25 +3,23 @@ Anthropic-compatible messages endpoint.
 
 Implements POST /v1/messages following the Anthropic Messages API specification.
 Supports both streaming (SSE) and non-streaming response modes.
-
-Key differences from OpenAI format:
-- System message is a top-level field, not part of the messages array.
-- Streaming uses named event types (message_start, content_block_delta, etc.)
-  instead of a single "data:" stream with a [DONE] terminator.
-- Response uses content blocks instead of a single content string.
-
-Wire format conversion:
-    Anthropic MessagesRequest -> internal ChatCompletionRequest -> Provider
-    Provider response -> internal ChatCompletionResponse -> Anthropic MessagesResponse
+Integrates session recording and usage tracking.
 """
 
 import logging
+import time
 import uuid
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Request
 from fastapi.responses import JSONResponse, StreamingResponse
 
-from backend.app.core.auth import verify_api_key
+from backend.app.core.auth import (
+    AuthInfo,
+    check_model_permission,
+    check_usage_limits,
+    record_api_key_usage,
+    verify_api_key,
+)
 from backend.app.core.dependencies import get_provider
 from backend.app.providers.base import (
     ChatCompletionRequest as InternalRequest,
@@ -46,6 +44,8 @@ from backend.app.schemas.anthropic import (
     TextBlock,
     TextDelta,
 )
+from backend.app.services.session_store import SessionRecord, get_session_store
+from backend.app.services.usage_tracker import get_usage_tracker
 
 logger = logging.getLogger(__name__)
 
@@ -53,21 +53,9 @@ router = APIRouter()
 
 
 def _extract_text_content(content) -> str:
-    """Extract plain text from Anthropic message content.
-
-    Anthropic message content can be either a plain string or a list of
-    typed content blocks. This function normalizes both forms to a string.
-
-    Args:
-        content: Either a string or a list of content block dicts/objects.
-
-    Returns:
-        The concatenated text content.
-    """
+    """Extract plain text from Anthropic message content."""
     if isinstance(content, str):
         return content
-
-    # content is a list of content blocks
     parts: list[str] = []
     for block in content:
         if hasattr(block, "text") and block.text is not None:
@@ -77,24 +65,28 @@ def _extract_text_content(content) -> str:
     return "".join(parts)
 
 
+def _extract_system_text(system: str | list | None) -> str | None:
+    """Extract plain text from the system field (string or list of content blocks)."""
+    if system is None:
+        return None
+    if isinstance(system, str):
+        return system
+    parts: list[str] = []
+    for block in system:
+        if isinstance(block, dict) and block.get("text"):
+            parts.append(block["text"])
+    return "\n".join(parts) if parts else None
+
+
 def _convert_anthropic_to_internal(request: MessagesRequest) -> InternalRequest:
-    """Convert an Anthropic-format request to the internal provider format.
-
-    Handles the system message extraction from the top-level field and
-    content block normalization.
-    """
+    """Convert an Anthropic-format request to the internal provider format."""
     messages: list[ChatMessage] = []
-
-    # Anthropic puts system prompt as a top-level field, not in messages.
-    # Convert it to an internal system ChatMessage at the start.
-    if request.system:
-        messages.append(ChatMessage(role="system", content=request.system))
-
-    # Convert each Anthropic message to internal format
+    system_text = _extract_system_text(request.system)
+    if system_text:
+        messages.append(ChatMessage(role="system", content=system_text))
     for msg in request.messages:
         text_content = _extract_text_content(msg.content)
         messages.append(ChatMessage(role=msg.role, content=text_content))
-
     return InternalRequest(
         messages=messages,
         model=request.model,
@@ -107,11 +99,6 @@ def _convert_anthropic_to_internal(request: MessagesRequest) -> InternalRequest:
 
 
 def _map_finish_reason(internal_reason: str) -> str:
-    """Map internal finish reasons to Anthropic stop_reason values.
-
-    Internal: "stop", "length", "error"
-    Anthropic: "end_turn", "max_tokens", "stop_sequence"
-    """
     mapping = {
         "stop": "end_turn",
         "length": "max_tokens",
@@ -121,24 +108,27 @@ def _map_finish_reason(internal_reason: str) -> str:
 
 
 def _make_msg_id() -> str:
-    """Generate a unique Anthropic message ID in msg_xxx format."""
     return f"msg_{uuid.uuid4().hex[:24]}"
 
 
 def _make_anthropic_error(
     status_code: int, message: str, error_type: str = "api_error"
 ) -> JSONResponse:
-    """Build an Anthropic-style error JSON response."""
     error_resp = AnthropicErrorResponse(
-        error=AnthropicErrorDetail(
-            type=error_type,
-            message=message,
-        )
+        error=AnthropicErrorDetail(type=error_type, message=message)
     )
-    return JSONResponse(
-        status_code=status_code,
-        content=error_resp.model_dump(),
-    )
+    return JSONResponse(status_code=status_code, content=error_resp.model_dump())
+
+
+def _messages_to_dicts(request: MessagesRequest) -> list[dict]:
+    """Convert Anthropic messages to dicts for session recording."""
+    result = []
+    system_text = _extract_system_text(request.system)
+    if system_text:
+        result.append({"role": "system", "content": system_text})
+    for msg in request.messages:
+        result.append({"role": msg.role, "content": _extract_text_content(msg.content)})
+    return result
 
 
 @router.post(
@@ -150,33 +140,33 @@ def _make_anthropic_error(
 )
 async def create_message(
     request: MessagesRequest,
+    fastapi_request: Request,
     provider: Provider = Depends(get_provider),
-    _api_key: str | None = Depends(verify_api_key),
+    auth: AuthInfo = Depends(verify_api_key),
 ):
-    """Handle an Anthropic-format messages request.
-
-    Converts the Anthropic request format to the internal format (including
-    extracting the system message from the top-level field), delegates to
-    the provider, and converts the response back to Anthropic format.
-
-    For streaming requests, returns a StreamingResponse with SSE events
-    using Anthropic event types: message_start, content_block_start,
-    content_block_delta, content_block_stop, message_delta, message_stop.
-
-    Args:
-        request: The Anthropic-format messages request.
-        provider: The LLM provider (injected).
-        _api_key: Verified API key (injected, unused directly).
-
-    Returns:
-        Anthropic-format messages response (or StreamingResponse for SSE).
-    """
     logger.info(
         "Anthropic messages request: model=%s stream=%s messages=%d",
         request.model,
         request.stream,
         len(request.messages),
     )
+
+    start_time = time.time()
+    client_ip = fastapi_request.client.host if fastapi_request.client else None
+
+    # Check model permissions and usage limits for managed API keys
+    check_model_permission(auth, request.model)
+    is_premium = await provider.is_model_premium(request.model)
+    check_usage_limits(auth, is_premium)
+
+    # Track usage
+    multiplier = await provider.get_model_multiplier(request.model)
+    get_usage_tracker().record_request(
+        model=request.model, api_format="anthropic", stream=request.stream,
+        is_premium=is_premium, multiplier=multiplier,
+        api_key_alias=auth.key_alias,
+    )
+    record_api_key_usage(auth, is_premium)
 
     try:
         internal_request = _convert_anthropic_to_internal(request)
@@ -185,10 +175,8 @@ async def create_message(
         return _make_anthropic_error(400, str(exc), "invalid_request_error")
 
     if not request.stream:
-        # --- Non-streaming path ---
         try:
             internal_response = await provider.chat_completion(internal_request)
-
             stop_reason = _map_finish_reason(internal_response.finish_reason)
             response = MessagesResponse(
                 id=_make_msg_id(),
@@ -200,11 +188,20 @@ async def create_message(
                     output_tokens=internal_response.usage.completion_tokens,
                 ),
             )
-            logger.debug(
-                "Anthropic message completed: id=%s output_tokens=%d",
-                response.id,
-                response.usage.output_tokens,
+
+            duration_ms = (time.time() - start_time) * 1000
+            record = SessionRecord(
+                model=request.model,
+                api_format="anthropic",
+                messages=_messages_to_dicts(request),
+                response_content=internal_response.content,
+                stream=False,
+                duration_ms=round(duration_ms, 1),
+                client_ip=client_ip,
+                api_key_alias=auth.key_alias,
             )
+            get_session_store().save(record)
+
             return response
 
         except ValueError as exc:
@@ -212,29 +209,28 @@ async def create_message(
             return _make_anthropic_error(400, str(exc), "invalid_request_error")
         except Exception as exc:
             logger.exception("Provider error during Anthropic message")
+            duration_ms = (time.time() - start_time) * 1000
+            record = SessionRecord(
+                model=request.model,
+                api_format="anthropic",
+                messages=_messages_to_dicts(request),
+                stream=False,
+                duration_ms=round(duration_ms, 1),
+                status="error",
+                error_message=str(exc),
+                client_ip=client_ip,
+                api_key_alias=auth.key_alias,
+            )
+            get_session_store().save(record)
             return _make_anthropic_error(500, str(exc), "api_error")
 
     # --- Streaming path ---
     async def anthropic_stream_generator():
-        """Async generator that yields SSE-formatted Anthropic streaming events.
-
-        Anthropic SSE format requires both an 'event: <type>' line and a
-        'data: {json}' line for each event, unlike OpenAI which only uses 'data:'.
-
-        Event sequence:
-        1. message_start - initial message metadata
-        2. content_block_start - start of each content block
-        3. ping - keep-alive
-        4. content_block_delta - incremental text (repeated)
-        5. content_block_stop - end of content block
-        6. message_delta - final message metadata (stop_reason, usage)
-        7. message_stop - stream terminator
-        """
         msg_id = _make_msg_id()
         output_tokens = 0
+        collected_content = []
 
         try:
-            # 1. message_start event
             message_start = MessageStartEvent(
                 message=MessagesResponse(
                     id=msg_id,
@@ -246,53 +242,69 @@ async def create_message(
             )
             yield f"event: message_start\ndata: {message_start.model_dump_json()}\n\n"
 
-            # 2. content_block_start event
             block_start = ContentBlockStartEvent(
-                index=0,
-                content_block=TextBlock(text=""),
+                index=0, content_block=TextBlock(text="")
             )
             yield f"event: content_block_start\ndata: {block_start.model_dump_json()}\n\n"
 
-            # 3. ping event
             ping = PingEvent()
             yield f"event: ping\ndata: {ping.model_dump_json()}\n\n"
 
-            # 4. Stream content deltas from provider
             finish_reason = "end_turn"
             async for delta in provider.chat_completion_stream(internal_request):
                 if delta.delta_content is not None and delta.delta_content != "":
-                    output_tokens += 1  # Approximate: count deltas as token proxy
+                    output_tokens += 1
+                    collected_content.append(delta.delta_content)
                     block_delta = ContentBlockDeltaEvent(
-                        index=0,
-                        delta=TextDelta(text=delta.delta_content),
+                        index=0, delta=TextDelta(text=delta.delta_content)
                     )
                     yield f"event: content_block_delta\ndata: {block_delta.model_dump_json()}\n\n"
-
                 if delta.finish_reason:
                     finish_reason = _map_finish_reason(delta.finish_reason)
 
-            # 5. content_block_stop event
             block_stop = ContentBlockStopEvent(index=0)
             yield f"event: content_block_stop\ndata: {block_stop.model_dump_json()}\n\n"
 
-            # 6. message_delta event
             msg_delta = MessageDeltaEvent(
                 delta=MessageDeltaPayload(stop_reason=finish_reason),
                 usage=MessageDeltaUsage(output_tokens=output_tokens),
             )
             yield f"event: message_delta\ndata: {msg_delta.model_dump_json()}\n\n"
 
-            # 7. message_stop event
             msg_stop = MessageStopEvent()
             yield f"event: message_stop\ndata: {msg_stop.model_dump_json()}\n\n"
 
+            duration_ms = (time.time() - start_time) * 1000
+            record = SessionRecord(
+                model=request.model,
+                api_format="anthropic",
+                messages=_messages_to_dicts(request),
+                response_content="".join(collected_content),
+                stream=True,
+                duration_ms=round(duration_ms, 1),
+                client_ip=client_ip,
+                api_key_alias=auth.key_alias,
+            )
+            get_session_store().save(record)
+
         except Exception as exc:
             logger.exception("Error during Anthropic streaming")
+            duration_ms = (time.time() - start_time) * 1000
+            record = SessionRecord(
+                model=request.model,
+                api_format="anthropic",
+                messages=_messages_to_dicts(request),
+                response_content="".join(collected_content),
+                stream=True,
+                duration_ms=round(duration_ms, 1),
+                status="error",
+                error_message=str(exc),
+                client_ip=client_ip,
+                api_key_alias=auth.key_alias,
+            )
+            get_session_store().save(record)
             error_data = AnthropicErrorResponse(
-                error=AnthropicErrorDetail(
-                    type="api_error",
-                    message=str(exc),
-                )
+                error=AnthropicErrorDetail(type="api_error", message=str(exc))
             )
             yield f"event: error\ndata: {error_data.model_dump_json()}\n\n"
 

@@ -1,47 +1,66 @@
 import { createContext, useContext, useState, useCallback, useEffect, type ReactNode } from "react";
 
 interface AuthContextType {
-  apiKey: string;
+  token: string;
+  username: string;
   isAuthenticated: boolean;
-  login: (key: string) => void;
+  login: (token: string, username: string) => void;
   logout: () => void;
 }
 
 const AuthContext = createContext<AuthContextType | null>(null);
 
-const STORAGE_KEY = "copilot-llm-provider-api-key";
+const TOKEN_KEY = "copilot-llm-provider-token";
+const USERNAME_KEY = "copilot-llm-provider-username";
 const AUTH_FLAG_KEY = "copilot-llm-provider-authenticated";
 
 export function AuthProvider({ children }: { children: ReactNode }) {
-  const [apiKey, setApiKey] = useState<string>(() => {
-    return localStorage.getItem(STORAGE_KEY) ?? "";
+  const [token, setToken] = useState<string>(() => {
+    return localStorage.getItem(TOKEN_KEY) ?? "";
+  });
+  const [username, setUsername] = useState<string>(() => {
+    return localStorage.getItem(USERNAME_KEY) ?? "";
   });
   const [isAuthenticated, setIsAuthenticated] = useState<boolean>(() => {
     return localStorage.getItem(AUTH_FLAG_KEY) === "true";
   });
 
   useEffect(() => {
-    localStorage.setItem(STORAGE_KEY, apiKey);
-  }, [apiKey]);
+    localStorage.setItem(TOKEN_KEY, token);
+  }, [token]);
+
+  useEffect(() => {
+    localStorage.setItem(USERNAME_KEY, username);
+  }, [username]);
 
   useEffect(() => {
     localStorage.setItem(AUTH_FLAG_KEY, String(isAuthenticated));
   }, [isAuthenticated]);
 
-  const login = useCallback((key: string) => {
-    setApiKey(key);
+  const login = useCallback((newToken: string, newUsername: string) => {
+    setToken(newToken);
+    setUsername(newUsername);
     setIsAuthenticated(true);
   }, []);
 
   const logout = useCallback(() => {
-    setApiKey("");
+    // Tell server to invalidate session
+    if (token) {
+      fetch("/api/auth/logout", {
+        method: "POST",
+        headers: { Authorization: `Bearer ${token}` },
+      }).catch(() => {});
+    }
+    setToken("");
+    setUsername("");
     setIsAuthenticated(false);
-    localStorage.removeItem(STORAGE_KEY);
+    localStorage.removeItem(TOKEN_KEY);
+    localStorage.removeItem(USERNAME_KEY);
     localStorage.removeItem(AUTH_FLAG_KEY);
-  }, []);
+  }, [token]);
 
   return (
-    <AuthContext.Provider value={{ apiKey, isAuthenticated, login, logout }}>
+    <AuthContext.Provider value={{ token, username, isAuthenticated, login, logout }}>
       {children}
     </AuthContext.Provider>
   );

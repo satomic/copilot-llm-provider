@@ -15,7 +15,7 @@ Reference: https://docs.anthropic.com/en/docs/api/messages
 
 from __future__ import annotations
 
-from typing import Literal
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
@@ -106,9 +106,10 @@ class MessagesRequest(BaseModel):
     max_tokens: int = Field(
         ..., gt=0, description="Maximum number of tokens to generate. Required."
     )
-    system: str | None = Field(
+    system: str | list[Any] | None = Field(
         default=None,
-        description="System prompt. Unlike OpenAI, this is a top-level field.",
+        description="System prompt. Can be a plain string or a list of content blocks "
+        "(e.g., [{\"type\": \"text\", \"text\": \"...\", \"cache_control\": {...}}]).",
     )
     stream: bool = Field(
         default=False,

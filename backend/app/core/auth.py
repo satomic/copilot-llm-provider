@@ -1,79 +1,205 @@
 """
 Authentication utilities.
 
-Provides FastAPI dependency functions for API key verification.
-Supports X-API-Key header and Bearer token authentication.
+Provides FastAPI dependency functions for API key and session token verification.
+Supports three authentication methods:
+1. Web UI session tokens (from user login)
+2. Managed API keys (with aliases, permissions, limits)
+3. Legacy environment/runtime API key (backward compatibility)
 """
 
 import logging
+from dataclasses import dataclass
 
 from fastapi import HTTPException, Request
 
 from backend.app.core.dependencies import get_settings
+from backend.app.core.runtime_config import get_runtime_config
+from backend.app.services.api_key_store import get_api_key_store
+from backend.app.services.user_store import get_user_store
 
 logger = logging.getLogger(__name__)
 
 
-async def verify_api_key(request: Request) -> str | None:
-    """FastAPI dependency that verifies the API key from the request.
+@dataclass
+class AuthInfo:
+    """Authentication result containing identity information."""
 
-    Checks for an API key in the following locations (in order):
-    1. X-API-Key header
-    2. Authorization header (Bearer token)
+    auth_type: str  # "session" | "api_key" | "legacy" | "none"
+    key_alias: str | None = None
+    username: str | None = None
+    api_key: str | None = None  # The raw key (for recording usage)
 
-    If the server is configured without an API key (api_key is None),
-    authentication is bypassed (suitable for local development).
 
-    Args:
-        request: The incoming FastAPI request.
+async def verify_api_key(request: Request) -> AuthInfo:
+    """FastAPI dependency that verifies authentication.
+
+    Checks for credentials in the following order:
+    1. Session token (from user login) - full access
+    2. Managed API key (from api_key_store) - restricted access
+    3. Legacy API key (env/runtime config) - full access
+    4. No auth configured - open access
 
     Returns:
-        The validated API key string, or None if auth is disabled.
+        AuthInfo with authentication details.
 
     Raises:
-        HTTPException: 401 if the API key is missing or invalid.
+        HTTPException: 401 if authentication fails.
     """
+    # Extract token from headers
+    token = _extract_token(request)
+
+    # 1. Check if it's a session token
+    if token:
+        user_store = get_user_store()
+        username = user_store.validate_session(token)
+        if username:
+            return AuthInfo(auth_type="session", username=username)
+
+    # 2. Check if it's a managed API key
+    if token:
+        key_store = get_api_key_store()
+        key_info = key_store.validate_key(token)
+        if key_info:
+            return AuthInfo(
+                auth_type="api_key",
+                key_alias=key_info.alias,
+                api_key=token,
+            )
+
+    # 3. Check legacy API key (env var / runtime config)
     settings = get_settings()
+    runtime_config = get_runtime_config()
+    effective_key = runtime_config.api_key or settings.api_key
 
-    # If no API key is configured, skip authentication entirely
-    if not settings.api_key:
-        return None
+    if effective_key:
+        if token and token == effective_key:
+            return AuthInfo(auth_type="legacy")
+        # Auth is required but no valid token provided
+        if not token:
+            logger.warning(
+                "Request missing credentials from %s",
+                request.client.host if request.client else "unknown",
+            )
+            raise HTTPException(
+                status_code=401,
+                detail={
+                    "error": {
+                        "message": "Authentication required. Provide a session token or API key via Authorization: Bearer <token>.",
+                        "type": "authentication_error",
+                        "code": 401,
+                    }
+                },
+            )
+        # Token provided but doesn't match anything
+        logger.warning(
+            "Invalid credentials from %s",
+            request.client.host if request.client else "unknown",
+        )
+        raise HTTPException(
+            status_code=401,
+            detail={
+                "error": {
+                    "message": "Invalid credentials.",
+                    "type": "authentication_error",
+                    "code": 401,
+                }
+            },
+        )
 
+    # 4. Check if managed API keys or users exist (require auth even without legacy key)
+    key_store = get_api_key_store()
+    user_store = get_user_store()
+    if key_store.has_keys() or user_store.has_users():
+        if not token:
+            raise HTTPException(
+                status_code=401,
+                detail={
+                    "error": {
+                        "message": "Authentication required.",
+                        "type": "authentication_error",
+                        "code": 401,
+                    }
+                },
+            )
+        # Token provided but doesn't match anything
+        raise HTTPException(
+            status_code=401,
+            detail={
+                "error": {
+                    "message": "Invalid credentials.",
+                    "type": "authentication_error",
+                    "code": 401,
+                }
+            },
+        )
+
+    # No auth configured at all
+    return AuthInfo(auth_type="none")
+
+
+def check_model_permission(auth: AuthInfo, model: str) -> None:
+    """Check if the authenticated user has permission to use a model.
+
+    Raises HTTPException 403 if not allowed.
+    """
+    if auth.auth_type != "api_key" or not auth.api_key:
+        return  # Session tokens and legacy keys have full access
+
+    key_store = get_api_key_store()
+    if not key_store.check_model_permission(auth.api_key, model):
+        raise HTTPException(
+            status_code=403,
+            detail={
+                "error": {
+                    "message": f"API key '{auth.key_alias}' does not have permission to use model '{model}'.",
+                    "type": "permission_error",
+                    "code": 403,
+                }
+            },
+        )
+
+
+def check_usage_limits(auth: AuthInfo, is_premium: bool = False) -> None:
+    """Check if the authenticated user has remaining quota.
+
+    Raises HTTPException 429 if limits exceeded.
+    """
+    if auth.auth_type != "api_key" or not auth.api_key:
+        return  # Session tokens and legacy keys have no limits
+
+    key_store = get_api_key_store()
+    if not key_store.check_limits(auth.api_key, is_premium):
+        raise HTTPException(
+            status_code=429,
+            detail={
+                "error": {
+                    "message": f"API key '{auth.key_alias}' has exceeded its usage limit.",
+                    "type": "rate_limit_error",
+                    "code": 429,
+                }
+            },
+        )
+
+
+def record_api_key_usage(auth: AuthInfo, is_premium: bool = False) -> None:
+    """Record usage for a managed API key."""
+    if auth.auth_type != "api_key" or not auth.api_key:
+        return
+    key_store = get_api_key_store()
+    key_store.record_usage(auth.api_key, is_premium)
+
+
+def _extract_token(request: Request) -> str | None:
+    """Extract bearer token from request headers."""
     # Try X-API-Key header first
     api_key = request.headers.get("x-api-key")
+    if api_key:
+        return api_key
 
     # Fall back to Authorization: Bearer <key>
-    if not api_key:
-        auth_header = request.headers.get("authorization", "")
-        if auth_header.lower().startswith("bearer "):
-            api_key = auth_header[7:].strip()
+    auth_header = request.headers.get("authorization", "")
+    if auth_header.lower().startswith("bearer "):
+        return auth_header[7:].strip()
 
-    # No key provided at all
-    if not api_key:
-        logger.warning("Request missing API key from %s", request.client.host if request.client else "unknown")
-        raise HTTPException(
-            status_code=401,
-            detail={
-                "error": {
-                    "message": "Missing API key. Provide it via X-API-Key header or Authorization: Bearer <key>.",
-                    "type": "authentication_error",
-                    "code": 401,
-                }
-            },
-        )
-
-    # Key provided but does not match
-    if api_key != settings.api_key:
-        logger.warning("Invalid API key attempt from %s", request.client.host if request.client else "unknown")
-        raise HTTPException(
-            status_code=401,
-            detail={
-                "error": {
-                    "message": "Invalid API key.",
-                    "type": "authentication_error",
-                    "code": 401,
-                }
-            },
-        )
-
-    return api_key
+    return None
