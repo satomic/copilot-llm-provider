@@ -31,12 +31,10 @@ def get_settings() -> Settings:
 
 
 async def get_provider(request: Request) -> Provider:
-    """Return the active LLM provider instance.
+    """Return an LLM provider instance.
 
-    This dependency is resolved at request time and returns the
-    concrete Provider implementation (e.g., CopilotProvider) that
-    was initialized during application startup and stored on
-    ``app.state.provider``.
+    Uses the token pool for round-robin selection among active tokens.
+    Falls back to the primary provider stored on app.state.
 
     Args:
         request: The incoming FastAPI request (injected automatically).
@@ -45,21 +43,38 @@ async def get_provider(request: Request) -> Provider:
         The active Provider instance.
 
     Raises:
-        HTTPException: 503 if the provider is not initialized.
+        HTTPException: 503 if no provider is available.
     """
+    from backend.app.services.token_pool import get_token_pool
+
+    # Check for explicit token selection via header
+    requested_token_id = request.headers.get("X-GitHub-Token-Id")
+
+    pool = get_token_pool()
+    token_info = pool.select_token(requested_token_id)
+
+    if token_info and token_info.provider:
+        # Store selected token info on request state for downstream use
+        request.state.github_token_id = token_info.id
+        request.state.github_token_alias = token_info.alias
+        return token_info.provider
+
+    # Fallback to the primary provider
     provider: Provider | None = getattr(request.app.state, "provider", None)
 
     if provider is None:
-        logger.error("Provider not initialized — the app may still be starting up")
+        logger.error("No provider available — the app may still be starting up")
         raise HTTPException(
             status_code=503,
             detail={
                 "error": {
-                    "message": "Service unavailable. The LLM provider is not initialized.",
+                    "message": "Service unavailable. No LLM provider is available.",
                     "type": "server_error",
                     "code": 503,
                 }
             },
         )
 
+    request.state.github_token_id = None
+    request.state.github_token_alias = None
     return provider

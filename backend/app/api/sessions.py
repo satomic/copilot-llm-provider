@@ -32,14 +32,19 @@ async def list_sessions(
     offset: int = Query(default=0, ge=0),
     model: str | None = Query(default=None),
     api_key_alias: str | None = Query(default=None),
+    github_token_alias: str | None = Query(default=None),
     _auth: AuthInfo = Depends(verify_api_key),
 ):
     """List recorded sessions with pagination and optional filters."""
     store = get_session_store()
     sessions = store.list_sessions(
-        limit=limit, offset=offset, model=model, api_key_alias=api_key_alias
+        limit=limit, offset=offset, model=model,
+        api_key_alias=api_key_alias, github_token_alias=github_token_alias,
     )
-    total = store.get_total_count(model=model, api_key_alias=api_key_alias)
+    total = store.get_total_count(
+        model=model, api_key_alias=api_key_alias,
+        github_token_alias=github_token_alias,
+    )
     return {"sessions": sessions, "total": total, "limit": limit, "offset": offset}
 
 
@@ -134,7 +139,7 @@ async def continue_session(
     # Build internal request from the full history
     history = [ChatMessage(role=m["role"], content=m["content"]) for m in existing_messages]
 
-    model = session.get("model", "gpt-4o")
+    model = session.get("model", "gpt-4.1")
     start_time = time.time()
     client_ip = fastapi_request.client.host if fastapi_request.client else None
 

@@ -33,6 +33,7 @@ class SessionRecord:
     error_message: str | None = None
     client_ip: str | None = None
     api_key_alias: str | None = None
+    github_token_alias: str | None = None
 
 
 class SessionStore:
@@ -61,6 +62,7 @@ class SessionStore:
         offset: int = 0,
         model: str | None = None,
         api_key_alias: str | None = None,
+        github_token_alias: str | None = None,
     ) -> list[dict]:
         files = sorted(self._dir.glob("*.json"), key=lambda f: f.stat().st_mtime, reverse=True)
         results = []
@@ -72,6 +74,8 @@ class SessionStore:
                 if model and data.get("model", "") != model:
                     continue
                 if api_key_alias and data.get("api_key_alias") != api_key_alias:
+                    continue
+                if github_token_alias and data.get("github_token_alias") != github_token_alias:
                     continue
                 # Pagination after filtering
                 skipped += 1
@@ -97,6 +101,7 @@ class SessionStore:
                     "message_count": len(messages),
                     "response_preview": (data.get("response_content", "") or "")[:100],
                     "api_key_alias": data.get("api_key_alias"),
+                    "github_token_alias": data.get("github_token_alias"),
                     "first_message": first_msg,
                 })
             except Exception:
@@ -150,8 +155,9 @@ class SessionStore:
         self,
         model: str | None = None,
         api_key_alias: str | None = None,
+        github_token_alias: str | None = None,
     ) -> int:
-        if not model and not api_key_alias:
+        if not model and not api_key_alias and not github_token_alias:
             return len(list(self._dir.glob("*.json")))
         count = 0
         for f in self._dir.glob("*.json"):
@@ -161,15 +167,18 @@ class SessionStore:
                     continue
                 if api_key_alias and data.get("api_key_alias") != api_key_alias:
                     continue
+                if github_token_alias and data.get("github_token_alias") != github_token_alias:
+                    continue
                 count += 1
             except Exception:
                 pass
         return count
 
     def get_filter_options(self) -> dict:
-        """Return distinct models and API key aliases for filtering."""
+        """Return distinct models, API key aliases, and GitHub token aliases for filtering."""
         models: set[str] = set()
         aliases: set[str] = set()
+        token_aliases: set[str] = set()
         for f in self._dir.glob("*.json"):
             try:
                 data = json.loads(f.read_text(encoding="utf-8"))
@@ -179,11 +188,15 @@ class SessionStore:
                 a = data.get("api_key_alias")
                 if a:
                     aliases.add(a)
+                ta = data.get("github_token_alias")
+                if ta:
+                    token_aliases.add(ta)
             except Exception:
                 pass
         return {
             "models": sorted(models),
             "aliases": sorted(aliases),
+            "token_aliases": sorted(token_aliases),
         }
 
 

@@ -281,6 +281,30 @@ class CopilotProvider(Provider):
         logger.warning("Model %s not found in available models %s, passing through", requested, available)
         return requested
 
+    async def get_quota(self) -> dict:
+        """Fetch current quota information from the Copilot service.
+
+        Uses the SDK's built-in account.get_quota() JSON-RPC method to retrieve
+        premium request limits, usage, and reset dates.
+        """
+        client = self._ensure_started()
+        try:
+            quota_result = await client.rpc.account.get_quota()
+            snapshots = {}
+            for snapshot_type, snapshot in quota_result.quota_snapshots.items():
+                snapshots[snapshot_type] = {
+                    "entitlement_requests": snapshot.entitlement_requests,
+                    "used_requests": snapshot.used_requests,
+                    "overage": snapshot.overage,
+                    "remaining_percentage": snapshot.remaining_percentage,
+                    "reset_date": snapshot.reset_date,
+                    "overage_allowed": snapshot.overage_allowed_with_exhausted_quota,
+                }
+            return snapshots
+        except Exception as exc:
+            logger.warning("Failed to fetch quota: %s", exc)
+            raise
+
     async def chat_completion(
         self, request: ChatCompletionRequest
     ) -> ChatCompletionResponse:

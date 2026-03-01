@@ -19,6 +19,7 @@ from fastapi.staticfiles import StaticFiles
 from backend.app.core.dependencies import get_settings
 from backend.app.core.logging import setup_logging
 from backend.app.providers.copilot import CopilotProvider
+from backend.app.services.token_pool import get_token_pool
 
 # Import routers
 from backend.app.api.openai.chat import router as openai_chat_router
@@ -49,26 +50,45 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 
     logger.info("Starting Copilot LLM Provider v%s", APP_VERSION)
 
-    # Initialize the LLM provider and store it on app state for DI
-    provider = CopilotProvider(github_token=settings.github_token)
-    try:
-        await provider.start()
-        logger.info("Provider started successfully")
-    except Exception:
-        logger.exception("Failed to start provider")
-        raise
+    # Initialize the token pool (multi-token support)
+    token_pool = get_token_pool()
+
+    # If a GITHUB_TOKEN is set in env and no tokens exist in the pool yet,
+    # auto-add it as the "default" token for backward compatibility.
+    if settings.github_token and token_pool.token_count() == 0:
+        logger.info("Auto-adding GITHUB_TOKEN from environment as default token")
+        await token_pool.add_token(alias="default", token=settings.github_token)
+    elif token_pool.token_count() > 0:
+        await token_pool.start_all()
+
+    # Also create a single "primary" provider for backward compat.
+    # This uses the first active token from the pool, or env token as fallback.
+    active_tokens = token_pool.get_active_tokens()
+    if active_tokens:
+        provider = active_tokens[0].provider
+        logger.info("Primary provider set from token pool (%s)", active_tokens[0].alias)
+    else:
+        # Fallback: try starting a provider with the env token directly
+        provider = CopilotProvider(github_token=settings.github_token)
+        try:
+            await provider.start()
+            logger.info("Fallback provider started with env GITHUB_TOKEN")
+        except Exception:
+            logger.exception("Failed to start fallback provider")
+            raise
 
     app.state.provider = provider
+    app.state.token_pool = token_pool
 
     yield
 
     # Graceful shutdown
-    logger.info("Shutting down provider...")
+    logger.info("Shutting down token pool...")
     try:
-        await provider.stop()
-        logger.info("Provider stopped")
+        await token_pool.stop_all()
+        logger.info("Token pool stopped")
     except Exception:
-        logger.exception("Error during provider shutdown")
+        logger.exception("Error during token pool shutdown")
 
 
 def create_app() -> FastAPI:

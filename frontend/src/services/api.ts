@@ -190,6 +190,10 @@ export interface UsageStats {
     string,
     { total_requests: number; premium_requests: number; models: Record<string, number> }
   >;
+  by_token?: Record<
+    string,
+    { total_requests: number; premium_requests: number; models: Record<string, number> }
+  >;
 }
 
 /**
@@ -201,6 +205,128 @@ export async function fetchUsageStats(token: string): Promise<UsageStats> {
   });
   if (!response.ok) {
     throw new Error("Failed to fetch usage stats");
+  }
+  return response.json();
+}
+
+// ============================================================================
+// GitHub Token Pool API
+// ============================================================================
+
+export interface GitHubTokenInfo {
+  id: string;
+  alias: string;
+  token_preview: string;
+  enabled: boolean;
+  status: string;
+  error_message: string | null;
+  total_requests: number;
+  premium_requests: number;
+  premium_quota_limit: number | null;
+  premium_quota_used: number | null;
+  premium_quota_reset: string | null;
+  created_at: number;
+  last_used_at: number | null;
+}
+
+export interface TokenPoolStatus {
+  tokens: GitHubTokenInfo[];
+  total: number;
+  active: number;
+}
+
+export async function fetchGitHubTokens(token: string): Promise<TokenPoolStatus> {
+  const response = await fetch("/api/admin/github-tokens", {
+    headers: authHeaders(token),
+  });
+  if (!response.ok) {
+    throw new Error("Failed to fetch GitHub tokens");
+  }
+  return response.json();
+}
+
+export async function addGitHubToken(
+  token: string,
+  alias: string,
+  githubToken: string,
+  enabled: boolean = true
+): Promise<{ id: string; alias: string; status: string; error_message: string | null }> {
+  const response = await fetch("/api/admin/github-tokens", {
+    method: "POST",
+    headers: authHeaders(token),
+    body: JSON.stringify({ alias, token: githubToken, enabled }),
+  });
+  if (!response.ok) {
+    const msg = await handleErrorResponse(response);
+    throw new Error(msg);
+  }
+  return response.json();
+}
+
+export async function updateGitHubToken(
+  token: string,
+  tokenId: string,
+  updates: { alias?: string; token?: string; enabled?: boolean }
+): Promise<void> {
+  const response = await fetch(`/api/admin/github-tokens/${tokenId}`, {
+    method: "PUT",
+    headers: authHeaders(token),
+    body: JSON.stringify(updates),
+  });
+  if (!response.ok) {
+    const msg = await handleErrorResponse(response);
+    throw new Error(msg);
+  }
+}
+
+export async function deleteGitHubToken(token: string, tokenId: string): Promise<void> {
+  const response = await fetch(`/api/admin/github-tokens/${tokenId}`, {
+    method: "DELETE",
+    headers: authHeaders(token),
+  });
+  if (!response.ok) {
+    const msg = await handleErrorResponse(response);
+    throw new Error(msg);
+  }
+}
+
+export async function toggleGitHubToken(
+  token: string,
+  tokenId: string,
+  enabled: boolean
+): Promise<void> {
+  const response = await fetch(`/api/admin/github-tokens/${tokenId}/toggle`, {
+    method: "POST",
+    headers: authHeaders(token),
+    body: JSON.stringify({ enabled }),
+  });
+  if (!response.ok) {
+    const msg = await handleErrorResponse(response);
+    throw new Error(msg);
+  }
+}
+
+export async function fetchTokenQuota(
+  token: string,
+  tokenId: string
+): Promise<Record<string, unknown>> {
+  const response = await fetch(`/api/admin/github-tokens/${tokenId}/quota`, {
+    headers: authHeaders(token),
+  });
+  if (!response.ok) {
+    throw new Error("Failed to fetch token quota");
+  }
+  return response.json();
+}
+
+export async function fetchAllTokenQuotas(
+  token: string
+): Promise<Record<string, Record<string, unknown>>> {
+  const response = await fetch("/api/admin/github-tokens/quotas", {
+    headers: authHeaders(token),
+  });
+  if (!response.ok) {
+    throw new Error("Failed to fetch token quotas");
   }
   return response.json();
 }

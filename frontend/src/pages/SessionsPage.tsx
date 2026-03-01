@@ -15,6 +15,7 @@ interface SessionSummary {
   message_count: number;
   response_preview: string;
   api_key_alias?: string | null;
+  github_token_alias?: string | null;
   first_message?: string;
 }
 
@@ -35,6 +36,7 @@ interface SessionDetail {
 interface FilterOptions {
   models: string[];
   aliases: string[];
+  token_aliases: string[];
 }
 
 function authHeaders(token: string): Record<string, string> {
@@ -56,9 +58,10 @@ export default function SessionsPage() {
   const limit = 20;
 
   // Filters
-  const [filterOptions, setFilterOptions] = useState<FilterOptions>({ models: [], aliases: [] });
+  const [filterOptions, setFilterOptions] = useState<FilterOptions>({ models: [], aliases: [], token_aliases: [] });
   const [filterModel, setFilterModel] = useState<string>("");
   const [filterAlias, setFilterAlias] = useState<string>("");
+  const [filterToken, setFilterToken] = useState<string>("");
 
   // Continue-chat state
   const [chatInput, setChatInput] = useState("");
@@ -75,7 +78,7 @@ export default function SessionsPage() {
   const [confirmingBatch, setConfirmingBatch] = useState(false);
 
   // Resizable panel width
-  const [listWidth, setListWidth] = useState(360);
+  const [listWidth, setListWidth] = useState(440);
   const isDragging = useRef(false);
   const startX = useRef(0);
   const startWidth = useRef(0);
@@ -124,6 +127,7 @@ export default function SessionsPage() {
     });
     if (filterModel) params.set("model", filterModel);
     if (filterAlias) params.set("api_key_alias", filterAlias);
+    if (filterToken) params.set("github_token_alias", filterToken);
 
     fetch(`/api/sessions?${params}`, {
       headers: authHeaders(token),
@@ -135,7 +139,7 @@ export default function SessionsPage() {
       })
       .catch(() => setSessions([]))
       .finally(() => setLoading(false));
-  }, [token, offset, filterModel, filterAlias]);
+  }, [token, offset, filterModel, filterAlias, filterToken]);
 
   useEffect(() => {
     fetchSessions();
@@ -144,7 +148,7 @@ export default function SessionsPage() {
   // Reset offset when filters change
   useEffect(() => {
     setOffset(0);
-  }, [filterModel, filterAlias]);
+  }, [filterModel, filterAlias, filterToken]);
 
   const viewSession = useCallback(
     (id: string) => {
@@ -308,11 +312,14 @@ export default function SessionsPage() {
 
   const conversation = buildConversation();
 
-  // Build session title: "alias: first_message" or just "first_message"
+  // Build session title: "[token] alias: first_message"
   const sessionTitle = (s: SessionSummary): string => {
-    const prefix = s.api_key_alias ? `${s.api_key_alias}: ` : "";
+    const parts: string[] = [];
+    if (s.github_token_alias) parts.push(`[${s.github_token_alias}]`);
+    if (s.api_key_alias) parts.push(`${s.api_key_alias}:`);
     const msg = s.first_message || s.response_preview || "...";
-    return `${prefix}${msg}`;
+    parts.push(msg);
+    return parts.join(" ");
   };
 
   return (
@@ -352,10 +359,10 @@ export default function SessionsPage() {
           </div>
 
           {/* Filters */}
-          {(filterOptions.models.length > 0 || filterOptions.aliases.length > 0) && (
+          {(filterOptions.models.length > 0 || filterOptions.aliases.length > 0 || filterOptions.token_aliases.length > 0) && (
             <div className="flex items-center gap-2 px-4 py-2 border-b border-edge bg-surface/50">
               {filterOptions.models.length > 0 && (
-                <div className="relative max-w-[45%]">
+                <div className="relative flex-1 min-w-0">
                   <select
                     value={filterModel}
                     onChange={(e) => setFilterModel(e.target.value)}
@@ -374,7 +381,7 @@ export default function SessionsPage() {
                 </div>
               )}
               {filterOptions.aliases.length > 0 && (
-                <div className="relative max-w-[45%]">
+                <div className="relative flex-1 min-w-0">
                   <select
                     value={filterAlias}
                     onChange={(e) => setFilterAlias(e.target.value)}
@@ -384,6 +391,25 @@ export default function SessionsPage() {
                     <option value="">{t("sessions.filterAlias")}: {t("sessions.filterAll")}</option>
                     {filterOptions.aliases.map((a) => (
                       <option key={a} value={a}>{a}</option>
+                    ))}
+                  </select>
+                  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor"
+                    className="pointer-events-none absolute right-1.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-fg-muted">
+                    <path fillRule="evenodd" d="M5.22 8.22a.75.75 0 0 1 1.06 0L10 11.94l3.72-3.72a.75.75 0 1 1 1.06 1.06l-4.25 4.25a.75.75 0 0 1-1.06 0L5.22 9.28a.75.75 0 0 1 0-1.06Z" clipRule="evenodd" />
+                  </svg>
+                </div>
+              )}
+              {filterOptions.token_aliases.length > 0 && (
+                <div className="relative flex-1 min-w-0">
+                  <select
+                    value={filterToken}
+                    onChange={(e) => setFilterToken(e.target.value)}
+                    className="w-full text-[11px] bg-canvas border border-edge rounded-md pl-2 pr-6 py-1 text-fg
+                      focus:outline-none focus:ring-1 focus:ring-accent appearance-none cursor-pointer truncate"
+                  >
+                    <option value="">{t("sessions.filterToken")}: {t("sessions.filterAll")}</option>
+                    {filterOptions.token_aliases.map((ta) => (
+                      <option key={ta} value={ta}>{ta}</option>
                     ))}
                   </select>
                   <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor"

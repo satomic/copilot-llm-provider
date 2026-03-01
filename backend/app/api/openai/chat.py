@@ -136,6 +136,10 @@ async def create_chat_completion(
     start_time = time.time()
     client_ip = fastapi_request.client.host if fastapi_request.client else None
 
+    # Capture GitHub token info from the provider selection
+    github_token_id = getattr(fastapi_request.state, "github_token_id", None)
+    github_token_alias = getattr(fastapi_request.state, "github_token_alias", None)
+
     # Check model permissions and usage limits for managed API keys
     check_model_permission(auth, request.model)
     is_premium = await provider.is_model_premium(request.model)
@@ -147,8 +151,14 @@ async def create_chat_completion(
         model=request.model, api_format="openai", stream=request.stream,
         is_premium=is_premium, multiplier=multiplier,
         api_key_alias=auth.key_alias,
+        github_token_alias=github_token_alias,
     )
     record_api_key_usage(auth, is_premium)
+
+    # Track premium request on the token pool
+    if is_premium and github_token_id:
+        from backend.app.services.token_pool import get_token_pool
+        get_token_pool().record_premium_request(github_token_id)
 
     try:
         internal_request = _convert_openai_to_internal(request)
@@ -171,6 +181,7 @@ async def create_chat_completion(
                 duration_ms=round(duration_ms, 1),
                 client_ip=client_ip,
                 api_key_alias=auth.key_alias,
+                github_token_alias=github_token_alias,
             )
             get_session_store().save(record)
 
@@ -191,6 +202,7 @@ async def create_chat_completion(
                 error_message=str(exc),
                 client_ip=client_ip,
                 api_key_alias=auth.key_alias,
+                github_token_alias=github_token_alias,
             )
             get_session_store().save(record)
             return _make_openai_error(500, str(exc), "server_error")
@@ -278,6 +290,7 @@ async def create_chat_completion(
                 duration_ms=round(duration_ms, 1),
                 client_ip=client_ip,
                 api_key_alias=auth.key_alias,
+                github_token_alias=github_token_alias,
             )
             get_session_store().save(record)
 
@@ -295,6 +308,7 @@ async def create_chat_completion(
                 error_message=str(exc),
                 client_ip=client_ip,
                 api_key_alias=auth.key_alias,
+                github_token_alias=github_token_alias,
             )
             get_session_store().save(record)
             error_data = {

@@ -58,7 +58,7 @@ function openaiCurl(b: string): Record<OS, Example> {
   -H "Content-Type: application/json" \\
   -H "Authorization: Bearer YOUR_API_KEY" \\
   -d '{
-    "model": "gpt-4o",
+    "model": "gpt-4.1",
     "messages": [
       {"role": "user", "content": "Hello!"}
     ],
@@ -71,7 +71,7 @@ function openaiCurl(b: string): Record<OS, Example> {
       label: "PowerShell",
       language: "powershell",
       code: `$body = @{
-    model = "gpt-4o"
+    model = "gpt-4.1"
     messages = @(
         @{ role = "user"; content = "Hello!" }
     )
@@ -101,7 +101,7 @@ client = OpenAI(
 )
 
 response = client.chat.completions.create(
-    model="gpt-4o",
+    model="gpt-4.1",
     messages=[
         {"role": "user", "content": "Hello!"}
     ],
@@ -122,7 +122,7 @@ const client = new OpenAI({
 });
 
 const stream = await client.chat.completions.create({
-  model: "gpt-4o",
+  model: "gpt-4.1",
   messages: [
     { role: "user", content: "Hello!" }
   ],

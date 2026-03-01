@@ -67,12 +67,14 @@ class UsageTracker:
         is_premium: bool | None = None,
         multiplier: float | None = None,
         api_key_alias: str | None = None,
+        github_token_alias: str | None = None,
     ) -> None:
         """Record a request.
 
         ``is_premium`` comes from the SDK billing multiplier.
         ``multiplier`` is the raw billing multiplier value from the SDK.
         ``api_key_alias`` is the alias of the API key used (if managed).
+        ``github_token_alias`` is the alias of the GitHub token used.
         """
         today = time.strftime("%Y-%m-%d")
         with self._lock:
@@ -111,7 +113,7 @@ class UsageTracker:
             day["total"] += 1
             day[tier] += 1
 
-            # Per-alias stats
+            # Per-alias stats (API key)
             if api_key_alias:
                 if "by_alias" not in self._data:
                     self._data["by_alias"] = {}
@@ -129,6 +131,25 @@ class UsageTracker:
                 if model not in alias_entry["models"]:
                     alias_entry["models"][model] = 0
                 alias_entry["models"][model] += 1
+
+            # Per-token stats (GitHub token)
+            if github_token_alias:
+                if "by_token" not in self._data:
+                    self._data["by_token"] = {}
+                token_data = self._data["by_token"]
+                if github_token_alias not in token_data:
+                    token_data[github_token_alias] = {
+                        "total_requests": 0,
+                        "premium_requests": 0,
+                        "models": {},
+                    }
+                token_entry = token_data[github_token_alias]
+                token_entry["total_requests"] += 1
+                if tier == "premium":
+                    token_entry["premium_requests"] += 1
+                if model not in token_entry["models"]:
+                    token_entry["models"][model] = 0
+                token_entry["models"][model] += 1
 
             self._save()
 
@@ -157,6 +178,7 @@ class UsageTracker:
                 }
 
             by_alias = self._data.get("by_alias", {})
+            by_token = self._data.get("by_token", {})
 
             return {
                 "total_requests": total_requests,
@@ -165,6 +187,7 @@ class UsageTracker:
                 "models": models,
                 "recent_daily": recent_daily,
                 "by_alias": by_alias,
+                "by_token": by_token,
             }
 
 
