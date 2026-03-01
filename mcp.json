@@ -1,0 +1,11 @@
+{
+  "mcpServers": {
+    "copilot-llm-provider": {
+      "command": "python",
+      "args": ["-m", "backend.app.mcp_server"],
+      "env": {
+        "GITHUB_TOKEN": "your-github-token-here"
+      }
+    }
+  }
+}

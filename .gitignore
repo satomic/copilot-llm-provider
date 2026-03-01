@@ -2,6 +2,7 @@
 __pycache__/
 *.py[codz]
 *$py.class
+.DS_Store
 
 # C extensions
 *.so
@@ -212,9 +213,9 @@ node_modules/
 *claude*
 AGENTS.md
 .github
-docker
 .env.development
 
 # Runtime data (sessions, config, usage stats)
 data/
-
+workspace/
+presentations
