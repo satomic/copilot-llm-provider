@@ -167,7 +167,7 @@ export default function SessionsPage() {
 
   useEffect(() => {
     chatEndRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [extraMessages, streamingContent]);
+  }, [extraMessages, streamingContent, selectedSession]);
 
   const handleSendMessage = useCallback(async () => {
     if (!chatInput.trim() || !selectedSession || sending) return;

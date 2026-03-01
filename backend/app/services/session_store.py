@@ -5,6 +5,7 @@ Records every chat completion request/response as a JSON file
 in data/sessions/ for audit and review purposes.
 """
 
+import hashlib
 import json
 import logging
 import time
@@ -42,8 +43,64 @@ class SessionStore:
     def __init__(self, sessions_dir: Path = SESSIONS_DIR) -> None:
         self._dir = sessions_dir
         self._dir.mkdir(parents=True, exist_ok=True)
+        # fingerprint → session_id mapping for conversation dedup
+        self._conversation_map: dict[str, str] = {}
+        self._rebuild_conversation_map()
+
+    @staticmethod
+    def _compute_fingerprint(
+        messages: list[dict],
+        client_ip: str | None,
+        api_key_alias: str | None,
+    ) -> str | None:
+        """Compute a conversation fingerprint from the first system + first user message."""
+        first_system = ""
+        first_user = ""
+        for m in messages:
+            role = m.get("role", "")
+            content = m.get("content", "") or ""
+            if role == "system" and not first_system:
+                first_system = content[:200]
+            elif role == "user" and not first_user:
+                first_user = content[:200]
+            if first_system and first_user:
+                break
+        if not first_user:
+            return None
+        raw = f"{first_system}|{first_user}|{client_ip or ''}|{api_key_alias or ''}"
+        return hashlib.sha256(raw.encode()).hexdigest()[:16]
+
+    def _rebuild_conversation_map(self) -> None:
+        """Populate the conversation map from existing session files on disk."""
+        for f in self._dir.glob("*.json"):
+            try:
+                data = json.loads(f.read_text(encoding="utf-8"))
+                fp = self._compute_fingerprint(
+                    data.get("messages", []),
+                    data.get("client_ip"),
+                    data.get("api_key_alias"),
+                )
+                if fp:
+                    self._conversation_map[fp] = data.get("id", f.stem)
+            except Exception:
+                pass
 
     def save(self, record: SessionRecord) -> str:
+        # Check if this request belongs to an existing conversation
+        fp = self._compute_fingerprint(
+            record.messages, record.client_ip, record.api_key_alias
+        )
+        if fp and fp in self._conversation_map:
+            existing_id = self._conversation_map[fp]
+            # Delete old file if ID changes (shouldn't, but be safe)
+            if existing_id != record.id:
+                old_path = self._dir / f"{existing_id}.json"
+                old_path.unlink(missing_ok=True)
+                record.id = existing_id
+            logger.debug("Session updated (same conversation): %s", record.id)
+        elif fp:
+            self._conversation_map[fp] = record.id
+
         path = self._dir / f"{record.id}.json"
         try:
             data = asdict(record)
@@ -136,6 +193,10 @@ class SessionStore:
         if not path.exists():
             return False
         try:
+            # Remove from conversation map
+            self._conversation_map = {
+                k: v for k, v in self._conversation_map.items() if v != session_id
+            }
             path.unlink()
             logger.debug("Session deleted: %s", session_id)
             return True
