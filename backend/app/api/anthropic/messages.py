@@ -9,6 +9,7 @@ client as proper Anthropic tool_use blocks, ensuring tools execute client-side.
 
 import json
 import logging
+import os
 import re
 import time
 import uuid
@@ -329,6 +330,10 @@ _TOOL_REFUSAL_PATTERNS = [
     "cannot execute", "cannot create", "cannot run",
     "not able to", "unable to execute", "unable to create",
     "environment restriction", "tools are disabled",
+    # Hook / permission denial leak — model parrots internal details
+    "pretooluse hook", "pre_tool_use hook", "pretooluse", "pre-tool-use",
+    "permission denied", "permission decision",
+    "hook blocking", "hook block",
     # Passive refusal: giving code for user to save manually
     "你可以将此内容保存", "你可以将以下内容保存", "保存为",
     "你可以手动", "请复制", "可以复制",
@@ -351,9 +356,24 @@ def _looks_like_tool_refusal(text: str, is_agentic: bool = False) -> bool:
     return False
 
 
+# Server-side paths that must never leak to the client.
+_SERVER_PATHS = [
+    os.getcwd(),                       # e.g. /Users/satomic/.../copilot-llm-provider
+    str(os.path.expanduser("~")),      # e.g. /Users/satomic
+]
+
+
+def _sanitize_server_paths(text: str) -> str:
+    """Strip server-side filesystem paths from model output to prevent leakage."""
+    for p in _SERVER_PATHS:
+        if p and p in text:
+            text = text.replace(p, "<redacted>")
+    return text
+
+
 def _has_unresolved_tool_use(text: str, tools: list[dict[str, Any]]) -> str | None:
     """Check if the text contains a well-formed tool_use JSON whose tool name
-    doesn't match any available tool. Returns the unresolved name, or None."""
+    doesn't match any available tool. Returns the unresolved name(s), or None."""
     raw = text.strip()
     try:
         data = json.loads(raw)
@@ -366,10 +386,20 @@ def _has_unresolved_tool_use(text: str, tools: list[dict[str, Any]]) -> str | No
     name = candidate.get("name") or candidate.get("tool_name")
     if not isinstance(name, str):
         return None
-    # multi_tool_use.parallel is handled separately
+    # For multi_tool_use.parallel, inspect each sub-tool
     if name == "multi_tool_use.parallel":
-        return None
-    # Check if it resolves
+        tool_uses = candidate.get("input", {}).get("tool_uses", [])
+        unresolved: list[str] = []
+        for sub in tool_uses:
+            if not isinstance(sub, dict):
+                continue
+            sub_name = sub.get("recipient_name") or sub.get("name")
+            if isinstance(sub_name, str):
+                params = sub.get("parameters") or sub.get("input") or {}
+                if _resolve_tool_name(sub_name, params, tools) is None:
+                    unresolved.append(sub_name)
+        return ", ".join(unresolved) if unresolved else None
+    # Single tool check
     if _resolve_tool_name(name, candidate.get("input", {}), tools) is None:
         return name
     return None
@@ -642,7 +672,7 @@ async def create_message(
     if not request.stream or has_tool_defs:
         try:
             internal_response = await provider.chat_completion(internal_request)
-            response_text = internal_response.content
+            response_text = _sanitize_server_paths(internal_response.content)
 
             # Tool bridging: parse model output for tool_use candidates
             if has_tool_defs:
@@ -695,7 +725,7 @@ async def create_message(
                         stop=internal_request.stop,
                     )
                     retry_response = await provider.chat_completion(retry_request)
-                    response_text = retry_response.content
+                    response_text = _sanitize_server_paths(retry_response.content)
                     tool_calls = _parse_tool_use_candidates(response_text, request.tools)
                     if tool_calls:
                         logger.info("Tool bridge: retry succeeded with %d tool_use", len(tool_calls))
