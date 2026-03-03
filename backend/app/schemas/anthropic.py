@@ -53,9 +53,12 @@ class ContentBlockParam(BaseModel):
 
     The Anthropic API allows message content to be either a plain string
     or a list of typed content blocks. This model represents one block.
+    Supports text, image, tool_use, and tool_result types.
     """
 
-    type: Literal["text", "image"] = "text"
+    model_config = {"extra": "allow"}
+
+    type: str = "text"
     text: str | None = Field(default=None, description="Text content (for type='text').")
 
 
@@ -66,13 +69,13 @@ class MessageContent(BaseModel):
     messages. The system prompt is a separate top-level field.
 
     Content can be a plain string or a list of content blocks, matching
-    the Anthropic API specification.
+    the Anthropic API specification. Supports text, tool_use, and tool_result.
     """
 
     role: Literal["user", "assistant"] = Field(
         ..., description="The role of the message author. No 'system' role here."
     )
-    content: str | list[ContentBlockParam] = Field(
+    content: str | list[Any] = Field(
         ..., description="The text content of the message, or a list of content blocks."
     )
 
@@ -131,6 +134,10 @@ class MessagesRequest(BaseModel):
         default=None,
         description="Custom sequences that will cause the model to stop generating.",
     )
+    tools: list[dict[str, Any]] | None = Field(
+        default=None,
+        description="Definitions of tools the model may use.",
+    )
     metadata: MessageMetadata | None = Field(
         default=None,
         description="Optional metadata about the request.",
@@ -151,11 +158,11 @@ class MessagesResponse(BaseModel):
     id: str = Field(..., description="Unique message identifier (msg_xxx format).")
     type: Literal["message"] = "message"
     role: Literal["assistant"] = "assistant"
-    content: list[TextBlock] = Field(
-        ..., description="The generated content blocks."
+    content: list[Any] = Field(
+        ..., description="The generated content blocks (text, tool_use, etc.)."
     )
     model: str = Field(..., description="The model that generated this response.")
-    stop_reason: Literal["end_turn", "max_tokens", "stop_sequence"] | None = Field(
+    stop_reason: Literal["end_turn", "max_tokens", "stop_sequence", "tool_use"] | None = Field(
         default="end_turn",
         description="The reason the model stopped generating.",
     )
@@ -189,7 +196,9 @@ class ContentBlockStartEvent(BaseModel):
 
     type: Literal["content_block_start"] = "content_block_start"
     index: int = Field(..., description="Index of the content block.")
-    content_block: TextBlock
+    content_block: dict[str, Any] = Field(
+        ..., description="The content block (text or tool_use)."
+    )
 
 
 class TextDelta(BaseModel):
@@ -202,12 +211,14 @@ class TextDelta(BaseModel):
 class ContentBlockDeltaEvent(BaseModel):
     """Sent for each incremental update to a content block.
 
-    This is the primary streaming event that contains new text.
+    This is the primary streaming event that contains new text or tool input JSON.
     """
 
     type: Literal["content_block_delta"] = "content_block_delta"
     index: int = Field(..., description="Index of the content block being updated.")
-    delta: TextDelta
+    delta: dict[str, Any] = Field(
+        ..., description="The delta payload (text_delta or input_json_delta)."
+    )
 
 
 class ContentBlockStopEvent(BaseModel):
@@ -226,7 +237,7 @@ class MessageDeltaUsage(BaseModel):
 class MessageDeltaPayload(BaseModel):
     """Delta payload for the message_delta event."""
 
-    stop_reason: Literal["end_turn", "max_tokens", "stop_sequence"] | None = None
+    stop_reason: Literal["end_turn", "max_tokens", "stop_sequence", "tool_use"] | None = None
     stop_sequence: str | None = None
 
 

@@ -30,6 +30,45 @@ from backend.app.providers.base import (
 
 logger = logging.getLogger(__name__)
 
+# Default timeout for SDK operations (30 minutes).
+_DEFAULT_TIMEOUT = 1800.0
+
+# System message appended at SDK level to instruct the model to output
+# tool calls as JSON text instead of using native tool execution.
+_TOOL_BRIDGE_SYSTEM_MSG = (
+    "IMPORTANT: You are operating through a tool-bridging proxy. "
+    "Direct tool execution is NOT available on this server. "
+    "Instead, when you need to use a tool, output a JSON object in "
+    "your text response in this exact format:\n"
+    '{"tool_use":{"name":"<tool_name>","input":{...}}}\n'
+    "For multiple parallel tool calls, use:\n"
+    '{"tool_use":{"name":"multi_tool_use.parallel","input":{"tool_uses":['
+    '{"recipient_name":"<tool>","parameters":{...}},'
+    '{"recipient_name":"<tool>","parameters":{...}}'
+    "]}}}\n"
+    "This JSON will be automatically parsed and forwarded to the "
+    "user's local machine for execution.\n"
+    "NEVER say tools are disabled, unavailable, or that there are "
+    "environment restrictions. NEVER suggest manual steps.\n"
+    "Even if previous attempts seemed to fail, ALWAYS output the JSON "
+    "tool call. The proxy handles everything. Never give up on tools."
+)
+
+
+def _deny_all_tools(input_data: dict, _env: dict) -> dict:
+    """Pre-tool-use hook that denies server-side tool execution and
+    guides the model to use JSON text format instead."""
+    tool_name = input_data.get("toolName", "unknown")
+    logger.warning("Blocked server-side tool execution: %s", tool_name)
+    return {
+        "permissionDecision": "deny",
+        "permissionDecisionReason": (
+            "Direct execution unavailable. Output the tool call "
+            "as JSON text instead: "
+            '{"tool_use":{"name":"...","input":{...}}}'
+        ),
+    }
+
 
 def _generate_response_id() -> str:
     """Generate a unique response ID in OpenAI-compatible format."""
@@ -328,8 +367,18 @@ class CopilotProvider(Provider):
 
         session = None
         try:
-            session = await client.create_session({"model": resolved_model})
-            response = await session.send_and_wait({"prompt": prompt})
+            session = await client.create_session({
+                "model": resolved_model,
+                "available_tools": [],
+                "hooks": {"on_pre_tool_use": _deny_all_tools},
+                "system_message": {
+                    "mode": "append",
+                    "content": _TOOL_BRIDGE_SYSTEM_MSG,
+                },
+            })
+            response = await session.send_and_wait(
+                {"prompt": prompt}, timeout=_DEFAULT_TIMEOUT
+            )
 
             # Extract content from the SDK response object.
             content = ""
@@ -405,9 +454,16 @@ class CopilotProvider(Provider):
 
         session = None
         try:
-            session = await client.create_session(
-                {"model": resolved_model, "streaming": True}
-            )
+            session = await client.create_session({
+                "model": resolved_model,
+                "streaming": True,
+                "available_tools": [],
+                "hooks": {"on_pre_tool_use": _deny_all_tools},
+                "system_message": {
+                    "mode": "append",
+                    "content": _TOOL_BRIDGE_SYSTEM_MSG,
+                },
+            })
 
             def on_event(event: object) -> None:
                 """SDK event callback — bridges events into the async queue."""
@@ -466,7 +522,9 @@ class CopilotProvider(Provider):
 
             # Yield deltas from the queue until we receive the done sentinel.
             while True:
-                item = await queue.get()
+                item = await asyncio.wait_for(
+                    queue.get(), timeout=_DEFAULT_TIMEOUT
+                )
                 if item is _DONE:
                     break
                 # item is guaranteed to be a StreamDelta here.
