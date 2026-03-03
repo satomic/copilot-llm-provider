@@ -4,6 +4,63 @@ import { useAuth } from "@/contexts/AuthContext";
 import { useI18n } from "@/contexts/I18nContext";
 import { renderMarkdown } from "@/utils/markdown";
 
+// ---------------------------------------------------------------------------
+// Tool block rendering
+// ---------------------------------------------------------------------------
+
+interface ContentSegment {
+  type: "text" | "tool_use" | "tool_result";
+  toolName?: string;
+  toolId?: string;
+  body: string;
+}
+
+/** Split message content into plain-text and tool-block segments. */
+function parseToolBlocks(content: string): ContentSegment[] {
+  const segments: ContentSegment[] = [];
+  // Match [tool_use id=xxx name=Yyy] {...}  or  [tool_result id=xxx] ...
+  const re = /\[tool_(use|result)\s+([^\]]*)\]\s*([\s\S]*?)(?=\n\[tool_|$)/g;
+  let lastIndex = 0;
+  let match: RegExpExecArray | null;
+
+  while ((match = re.exec(content)) !== null) {
+    // Push any preceding plain text
+    if (match.index > lastIndex) {
+      const text = content.slice(lastIndex, match.index).trim();
+      if (text) segments.push({ type: "text", body: text });
+    }
+    const kind = match[1] as "use" | "result";
+    const attrs = match[2]; // e.g. "id=toolu_xxx name=Write"
+    const body = match[3].trim();
+    const nameMatch = attrs.match(/name=(\S+)/);
+    const idMatch = attrs.match(/id=(\S+)/);
+    segments.push({
+      type: kind === "use" ? "tool_use" : "tool_result",
+      toolName: nameMatch?.[1],
+      toolId: idMatch?.[1],
+      body,
+    });
+    lastIndex = match.index + match[0].length;
+  }
+
+  // Remaining tail
+  if (lastIndex < content.length) {
+    const text = content.slice(lastIndex).trim();
+    if (text) segments.push({ type: "text", body: text });
+  }
+
+  return segments.length > 0 ? segments : [{ type: "text", body: content }];
+}
+
+/** Try to pretty-format JSON; return original if not valid JSON. */
+function tryFormatJson(s: string): string {
+  try {
+    return JSON.stringify(JSON.parse(s), null, 2);
+  } catch {
+    return s;
+  }
+}
+
 interface SessionSummary {
   id: string;
   timestamp: number;
@@ -305,7 +362,21 @@ export default function SessionsPage() {
     if (!selectedSession) return [];
     const msgs = [...selectedSession.messages];
     if (selectedSession.response_content) {
-      msgs.push({ role: "assistant", content: selectedSession.response_content });
+      let rc = selectedSession.response_content;
+      // Convert "[tool_use] [{...}]" format to "[tool_use name=X] {input}"
+      if (rc.startsWith("[tool_use] ")) {
+        try {
+          const arr = JSON.parse(rc.slice(11));
+          if (Array.isArray(arr)) {
+            rc = arr
+              .map((t: { name: string; input: unknown }) =>
+                `[tool_use name=${t.name}] ${JSON.stringify(t.input)}`
+              )
+              .join("\n");
+          }
+        } catch { /* keep original */ }
+      }
+      msgs.push({ role: "assistant", content: rc });
     }
     return [...msgs, ...extraMessages];
   };
@@ -659,6 +730,9 @@ export default function SessionsPage() {
                   }
 
                   const isUser = msg.role === "user";
+                  const segments = parseToolBlocks(msg.content);
+                  const hasToolBlocks = segments.some((s) => s.type !== "text");
+
                   return (
                     <div
                       key={`msg-${idx}`}
@@ -670,9 +744,67 @@ export default function SessionsPage() {
                             {msg.role}
                           </span>
                         </div>
-                        {isUser ? (
+
+                        {isUser && !hasToolBlocks ? (
                           <div className="rounded-2xl rounded-br-sm px-3.5 py-2.5 text-xs leading-relaxed whitespace-pre-wrap break-words bg-accent text-white">
                             {msg.content}
+                          </div>
+                        ) : hasToolBlocks ? (
+                          <div className="space-y-2">
+                            {segments.map((seg, si) =>
+                              seg.type === "text" ? (
+                                isUser ? (
+                                  <div key={si} className="rounded-2xl rounded-br-sm px-3.5 py-2.5 text-xs leading-relaxed whitespace-pre-wrap break-words bg-accent text-white">
+                                    {seg.body}
+                                  </div>
+                                ) : (
+                                  <div
+                                    key={si}
+                                    className="rounded-2xl rounded-bl-sm px-3.5 py-2.5 text-xs leading-relaxed break-words bg-surface text-fg border border-edge"
+                                    dangerouslySetInnerHTML={{ __html: renderMarkdown(seg.body) }}
+                                  />
+                                )
+                              ) : seg.type === "tool_use" ? (
+                                <div key={si} className="rounded-lg border border-amber-500/30 bg-amber-500/5 overflow-hidden">
+                                  <div className="flex items-center gap-2 px-3 py-1.5 bg-amber-500/10 border-b border-amber-500/20">
+                                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" fill="currentColor" className="w-3.5 h-3.5 text-amber-500">
+                                      <path d="M13.488 2.513a1.75 1.75 0 0 0-2.475 0L6.75 6.774a2.75 2.75 0 0 0-.596.892l-.848 2.047a.75.75 0 0 0 .98.98l2.047-.848a2.75 2.75 0 0 0 .892-.596l4.261-4.262a1.75 1.75 0 0 0 0-2.474Z" />
+                                      <path d="M4.75 3.5c-.69 0-1.25.56-1.25 1.25v6.5c0 .69.56 1.25 1.25 1.25h6.5c.69 0 1.25-.56 1.25-1.25V9A.75.75 0 0 1 14 9v2.25A2.75 2.75 0 0 1 11.25 14h-6.5A2.75 2.75 0 0 1 2 11.25v-6.5A2.75 2.75 0 0 1 4.75 2H7a.75.75 0 0 1 0 1.5H4.75Z" />
+                                    </svg>
+                                    <span className="text-[11px] font-semibold text-amber-600 dark:text-amber-400">
+                                      Tool Call
+                                    </span>
+                                    {seg.toolName && (
+                                      <code className="text-[10px] px-1.5 py-0.5 rounded bg-amber-500/15 text-amber-700 dark:text-amber-300 font-mono font-medium">
+                                        {seg.toolName}
+                                      </code>
+                                    )}
+                                  </div>
+                                  <pre className="px-3 py-2 text-[11px] leading-relaxed font-mono text-fg-secondary whitespace-pre-wrap break-all overflow-x-auto max-h-48 overflow-y-auto">
+                                    {tryFormatJson(seg.body)}
+                                  </pre>
+                                </div>
+                              ) : (
+                                <div key={si} className="rounded-lg border border-emerald-500/30 bg-emerald-500/5 overflow-hidden">
+                                  <div className="flex items-center gap-2 px-3 py-1.5 bg-emerald-500/10 border-b border-emerald-500/20">
+                                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" fill="currentColor" className="w-3.5 h-3.5 text-emerald-500">
+                                      <path fillRule="evenodd" d="M12.416 3.376a.75.75 0 0 1 .208 1.04l-5 7.5a.75.75 0 0 1-1.154.114l-3-3a.75.75 0 0 1 1.06-1.06l2.353 2.353 4.493-6.74a.75.75 0 0 1 1.04-.207Z" clipRule="evenodd" />
+                                    </svg>
+                                    <span className="text-[11px] font-semibold text-emerald-600 dark:text-emerald-400">
+                                      Tool Result
+                                    </span>
+                                    {seg.toolId && (
+                                      <code className="text-[10px] px-1.5 py-0.5 rounded bg-emerald-500/15 text-emerald-700 dark:text-emerald-300 font-mono">
+                                        {seg.toolId}
+                                      </code>
+                                    )}
+                                  </div>
+                                  <pre className="px-3 py-2 text-[11px] leading-relaxed font-mono text-fg-secondary whitespace-pre-wrap break-all overflow-x-auto max-h-48 overflow-y-auto">
+                                    {seg.body}
+                                  </pre>
+                                </div>
+                              )
+                            )}
                           </div>
                         ) : (
                           <div

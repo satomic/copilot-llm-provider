@@ -200,20 +200,23 @@ def _build_tool_aware_prompt(request: MessagesRequest) -> list[ChatMessage]:
             "respond normally without JSON.\n"
             "5. Even if previous tool calls in this conversation appeared "
             "to fail or were not executed, KEEP using the JSON format. "
-            "The proxy will handle forwarding. Never give up on tools."
+            "The proxy will handle forwarding. Never give up on tools.\n"
+            "6. ONLY use tools from the 'Available tools' list below. "
+            "Do NOT invent tool names like report_intent, think, plan, etc. "
+            "To create a file use Write; to edit use Edit; to run commands use Bash."
         )
 
         # Agentic clients (Claude Code etc.) expect ALL actions via tools.
         # Never output code blocks for the user to manually save.
         if is_agentic:
             tool_instruction += (
-                "\n6. NEVER output file contents as code blocks for the user "
+                "\n7. NEVER output file contents as code blocks for the user "
                 "to save manually. ALWAYS use the Write tool to create files "
                 "and the Edit tool to modify files directly.\n"
-                "7. For ANY task involving file creation, file editing, or "
+                "8. For ANY task involving file creation, file editing, or "
                 "command execution, you MUST output a tool call JSON. "
                 "The user's IDE will execute it automatically.\n"
-                "8. Do NOT ask the user to do anything manually. "
+                "9. Do NOT ask the user to do anything manually. "
                 "You are an autonomous coding agent — act, don't instruct."
             )
         if tool_lines:
@@ -346,6 +349,30 @@ def _looks_like_tool_refusal(text: str, is_agentic: bool = False) -> bool:
     if is_agentic and "```" in text and ("手动" in lower or "保存" in lower):
         return True
     return False
+
+
+def _has_unresolved_tool_use(text: str, tools: list[dict[str, Any]]) -> str | None:
+    """Check if the text contains a well-formed tool_use JSON whose tool name
+    doesn't match any available tool. Returns the unresolved name, or None."""
+    raw = text.strip()
+    try:
+        data = json.loads(raw)
+    except Exception:
+        return None
+    if not isinstance(data, dict):
+        return None
+    tool_use = data.get("tool_use")
+    candidate = tool_use if isinstance(tool_use, dict) else data
+    name = candidate.get("name") or candidate.get("tool_name")
+    if not isinstance(name, str):
+        return None
+    # multi_tool_use.parallel is handled separately
+    if name == "multi_tool_use.parallel":
+        return None
+    # Check if it resolves
+    if _resolve_tool_name(name, candidate.get("input", {}), tools) is None:
+        return name
+    return None
 
 
 def _unpack_parallel_tool_uses(
@@ -518,7 +545,7 @@ def _messages_to_dicts(request: MessagesRequest) -> list[dict]:
     if system_text:
         result.append({"role": "system", "content": system_text})
     for msg in request.messages:
-        result.append({"role": msg.role, "content": _extract_text_content(msg.content)})
+        result.append({"role": msg.role, "content": _content_blocks_to_text(msg.content)})
     return result
 
 
@@ -622,23 +649,41 @@ async def create_message(
                 is_agentic = _is_agentic_client(request)
                 tool_calls = _parse_tool_use_candidates(response_text, request.tools)
 
-                # Retry once if model refused instead of using tools
-                if not tool_calls and _looks_like_tool_refusal(response_text, is_agentic):
+                # Retry once if model refused or used a non-existent tool
+                unresolved_name = (
+                    _has_unresolved_tool_use(response_text, request.tools)
+                    if not tool_calls else None
+                )
+                should_retry = not tool_calls and (
+                    _looks_like_tool_refusal(response_text, is_agentic)
+                    or unresolved_name is not None
+                )
+                if should_retry:
+                    if unresolved_name:
+                        reason = f"unresolved tool name '{unresolved_name}'"
+                        hint = (
+                            f"The tool '{unresolved_name}' does not exist. "
+                            "You MUST only use tools from the Available tools list. "
+                            "To create a file use Write, to edit use Edit, "
+                            "to run commands use Bash. "
+                            "Output a valid tool call now:\n"
+                            '{"tool_use":{"name":"<tool_name>","input":{...}}}'
+                        )
+                    else:
+                        reason = "tool refusal detected"
+                        hint = (
+                            "You MUST use the JSON tool call format. "
+                            "Do NOT say you cannot use tools. "
+                            "Output the tool call now:\n"
+                            '{"tool_use":{"name":"<tool_name>","input":{...}}}'
+                        )
                     logger.warning(
-                        "Tool bridge: model refused tools, retrying with reinforcement. "
-                        "Original response: %.200s", response_text,
+                        "Tool bridge: %s, retrying. Original: %.200s",
+                        reason, response_text,
                     )
                     retry_messages = list(internal_request.messages) + [
                         ChatMessage(role="assistant", content=response_text),
-                        ChatMessage(
-                            role="user",
-                            content=(
-                                "You MUST use the JSON tool call format. "
-                                "Do NOT say you cannot use tools. "
-                                "Output the tool call now:\n"
-                                '{"tool_use":{"name":"<tool_name>","input":{...}}}'
-                            ),
-                        ),
+                        ChatMessage(role="user", content=hint),
                     ]
                     retry_request = InternalRequest(
                         messages=retry_messages,
