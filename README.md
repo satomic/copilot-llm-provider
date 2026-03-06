@@ -1,50 +1,63 @@
 # Copilot LLM Provider
 
-> Turn GitHub Copilot subscriptions into a standard OpenAI/Anthropic-compatible LLM API gateway for the enterprise.
+> Stop wasting premium requests. Pool your Copilot subscriptions, expose them as APIs, and put every last request to work.
 
 ---
 
-## Problem
+## The Problem: Wasted Premium Requests
 
-Enterprises invest heavily in GitHub Copilot subscriptions for developer productivity, but this powerful AI capability is locked inside IDE integrations. Development teams cannot programmatically access Copilot-backed models for:
+GitHub Copilot subscriptions come with a monthly premium request quota, but most individuals and teams **never use it all**. Quotas reset at the end of each billing cycle — unused requests are simply lost. Across a team of 10, 50, or 100 developers, this waste adds up to thousands of premium requests thrown away every month.
 
-- **CI/CD automation** — automated code review, PR summarization, release notes generation
-- **Internal tooling** — custom chatbots, knowledge-base assistants, documentation generators
-- **Agentic workflows** — Claude Code, Codex CLI, and other AI coding agents that require API endpoints
-- **Multi-team access governance** — different teams need different access levels, usage limits, and audit trails
+Meanwhile, teams that *could* benefit from LLM API access — for CI/CD automation, internal tooling, agentic workflows (Claude Code, Codex CLI), or custom chatbots — are forced to procure separate OpenAI or Anthropic API contracts, adding cost, vendor relationships, and compliance overhead on top of the Copilot subscriptions they already pay for.
 
-Meanwhile, procuring separate LLM API access (OpenAI, Anthropic) creates additional licensing costs, vendor relationships, and compliance overhead — all while the same models sit unused behind GitHub Copilot.
+## The Solution: Pool and Expose
 
-## Solution
+**Copilot LLM Provider** solves this by **pooling multiple Copilot subscriptions into a unified resource pool** and exposing them as standard OpenAI- and Anthropic-compatible API endpoints using the [GitHub Copilot SDK](https://github.com/satomic/github-copilot-sdk).
 
-**Copilot LLM Provider** transforms existing GitHub Copilot subscriptions into standard, enterprise-grade LLM API endpoints using the [GitHub Copilot SDK](https://github.com/satomic/github-copilot-sdk). It provides a FastAPI-based gateway that speaks the same wire protocol as OpenAI and Anthropic APIs, enabling any existing client library or AI tool to use Copilot-backed models without code changes.
+```
+  Clients & Tools          Unified Resource Pool          Individual Quotas (often underused)
+
+┌────────────────┐      ┌────────────────────────┐      ┌──────────┐
+│  OpenAI API    │      │                        │      │ Dev A    │
+│ /openai/v1/... │ ───► │  Copilot LLM Provider  │ ───► │ 300/1000 │  70% waste
+└────────────────┘      │                        │      └──────────┘
+                        │  Round-Robin Balancing │      ┌──────────┐
+┌────────────────┐      │  Quota Tracking        │      │ Dev B    │
+│ Anthropic API  │ ───► │  Combined: 3000 reqs   │ ───► │  50/1000 │  95% waste
+│/anthropic/v1/..│      │                        │      └──────────┘
+└────────────────┘      │  ► Near-zero waste     │      ┌──────────┐
+                        │                        │      │ Dev C    │
+                        └────────────────────────┘ ───► │ 120/1000 │  88% waste
+                                                        └──────────┘
+```
+
+Each developer's GitHub token is added to the pool. The gateway distributes requests across tokens via round-robin load balancing, tracks per-token quota usage in real time, and ensures no single account is over-utilized. Any existing client library or AI tool works without code changes — just point `base_url` at the gateway.
 
 ### Key Capabilities
 
-| Capability | Description |
+| Capability | Why It Matters |
 |---|---|
-| **Dual API Compatibility** | Drop-in replacement for both OpenAI (`/openai/v1/chat/completions`, `/openai/v1/models`) and Anthropic (`/anthropic/v1/messages`) APIs, with legacy non-prefixed routes also supported |
-| **Multi-Token Pooling** | Pool multiple GitHub accounts with round-robin load balancing for team-wide access |
-| **API Key Governance** | Managed API keys with per-key model restrictions, usage quotas, and enable/disable controls |
-| **Real-time Dashboard** | Admin UI for monitoring usage, managing tokens, viewing sessions, and tracking quotas |
+| **Multi-Token Pooling** | Combine N subscriptions into one pool; round-robin balancing maximizes total quota utilization |
+| **Real-Time Quota Monitoring** | Dashboard shows per-token used/remaining/reset date so you always know where you stand |
+| **Dual API Compatibility** | Drop-in replacement for both OpenAI (`/openai/v1/chat/completions`) and Anthropic (`/anthropic/v1/messages`) SDKs — no client code changes needed |
+| **API Key Governance** | Managed keys with per-key model restrictions, usage quotas, and enable/disable controls for multi-team access |
 | **Session Recording** | Full audit trail of every request/response for compliance and debugging |
-| **Quota Monitoring** | Live premium request quota tracking per token via the SDK's built-in `account.getQuota()` RPC |
-| **Streaming Support** | Full SSE streaming for both OpenAI and Anthropic formats |
-| **MCP Server** | Model Context Protocol server for Claude Desktop, Claude Code, and other MCP clients |
+| **Streaming Support** | Full SSE streaming in both OpenAI and Anthropic formats |
+| **MCP Server** | Expose Copilot models to Claude Desktop, Claude Code, and other MCP clients |
 
 ---
 
 ## Architecture
 
 ```
-┌──────────────────────────────────────────────────────────────────────┐
-│                          Clients & Tools                             │
+┌─────────────────────────────────────────────────────────────────────┐
+│                          Clients & Tools                            │
 │  OpenAI SDK  │  Anthropic SDK  │  Claude Code  │  Codex CLI  │ curl │
 └──────────┬───────────┬──────────────┬────────────┬──────────────────┘
            │           │              │            │
            ▼           ▼              ▼            ▼
-┌──────────────────────────────────────────────────────────────────────┐
-│                      FastAPI Gateway (main.py)                       │
+┌────────────────────────────────────────────────────────────────────┐
+│                      FastAPI Gateway (main.py)                     │
 │  ┌─────────────┐  ┌──────────────┐  ┌──────────┐  ┌──────────────┐ │
 │  │ Auth Layer  │  │ OpenAI API   │  │Anthropic │  │ Admin API    │ │
 │  │ Session/Key │  │/openai/v1/.. │  │ API      │  │ /api/admin/  │ │
@@ -53,19 +66,19 @@ Meanwhile, procuring separate LLM API access (OpenAI, Anthropic) creates additio
 │         │                │               │               │         │
 │         ▼                ▼               ▼               ▼         │
 │  ┌─────────────────────────────────────────────────────────────┐   │
-│  │                    Services Layer                            │   │
-│  │  UsageTracker  │  SessionStore  │  ApiKeyStore  │  UserStore │   │
+│  │                    Services Layer                           │   │
+│  │  UsageTracker  │  SessionStore  │  ApiKeyStore  │ UserStore │   │
 │  └───────────────────────────┬─────────────────────────────────┘   │
-│                              │                                      │
+│                              │                                     │
 │  ┌───────────────────────────▼─────────────────────────────────┐   │
-│  │                   Token Pool (Round-Robin)                   │   │
-│  │  ┌──────────┐  ┌──────────┐  ┌──────────┐                  │   │
-│  │  │ Token A  │  │ Token B  │  │ Token C  │  ...              │   │
-│  │  │ Provider │  │ Provider │  │ Provider │                   │   │
-│  │  └────┬─────┘  └────┬─────┘  └────┬─────┘                  │   │
+│  │                   Token Pool (Round-Robin)                  │   │
+│  │  ┌──────────┐   ┌──────────┐  ┌──────────┐                  │   │
+│  │  │ Token A  │   │ Token B  │  │ Token C  │  ...             │   │
+│  │  │ Provider │   │ Provider │  │ Provider │                  │   │
+│  │  └────┬─────┘   └────┬─────┘  └────┬─────┘                  │   │
 │  └───────┼──────────────┼─────────────┼────────────────────────┘   │
-│          │              │             │                              │
-└──────────┼──────────────┼─────────────┼──────────────────────────────┘
+│          │              │             │                            │
+└──────────┼──────────────┼─────────────┼────────────────────────────┘
            │              │             │
            ▼              ▼             ▼
 ┌──────────────────────────────────────────────────────────────────────┐
@@ -75,7 +88,7 @@ Meanwhile, procuring separate LLM API access (OpenAI, Anthropic) creates additio
            │              │             │
            ▼              ▼             ▼
 ┌──────────────────────────────────────────────────────────────────────┐
-│                    GitHub Copilot Service                             │
+│                    GitHub Copilot Service                            │
 │              gpt-4.1 │ claude-sonnet-4 │ o4-mini │ ...               │
 └──────────────────────────────────────────────────────────────────────┘
 ```
@@ -123,20 +136,20 @@ cp .env.example .env
 # Edit .env → set GITHUB_TOKEN=ghp_your_token_here
 
 # Start backend
-uvicorn backend.app.main:app --reload --host 0.0.0.0 --port 8000
+uvicorn src.backend.app.main:app --reload --host 0.0.0.0 --port 8000
 
 # Frontend (separate terminal)
-cd frontend && npm install && npm run dev
+cd src/frontend && npm install && npm run dev
 ```
 
 ### Option 2: Production Build
 
 ```bash
 # Build frontend
-cd frontend && npm ci && npm run build && cd ..
+cd src/frontend && npm ci && npm run build && cd ../..
 
 # Run with built frontend
-FRONTEND_DIR=frontend/dist uvicorn backend.app.main:app --host 0.0.0.0 --port 8000
+FRONTEND_DIR=src/frontend/dist uvicorn src.backend.app.main:app --host 0.0.0.0 --port 8000
 ```
 
 ### First-Time Setup
@@ -238,7 +251,7 @@ This project also runs as an MCP server, allowing MCP clients (Claude Desktop, C
   "mcpServers": {
     "copilot-llm-provider": {
       "command": "python",
-      "args": ["-m", "backend.app.mcp_server"],
+      "args": ["-m", "src.backend.app.mcp_server"],
       "cwd": "/absolute/path/to/copilot-llm-provider",
       "env": {
         "GITHUB_TOKEN": "ghp_your_token_here"
@@ -248,7 +261,7 @@ This project also runs as an MCP server, allowing MCP clients (Claude Desktop, C
 }
 ```
 
-Or run standalone: `python -m backend.app.mcp_server`
+Or run standalone: `python -m src.backend.app.mcp_server`
 
 ---
 
@@ -318,47 +331,48 @@ Create managed API keys with fine-grained controls:
 
 ```
 copilot-llm-provider/
-├── backend/
-│   ├── app/
-│   │   ├── main.py                 # FastAPI app, lifespan, routing
-│   │   ├── core/
-│   │   │   ├── config.py           # Settings (pydantic-settings)
-│   │   │   ├── auth.py             # Multi-method authentication
-│   │   │   ├── dependencies.py     # DI: provider selection, token pool
-│   │   │   └── runtime_config.py   # Dynamic runtime configuration
-│   │   ├── providers/
-│   │   │   ├── base.py             # Abstract Provider interface
-│   │   │   └── copilot.py          # CopilotProvider + quota fetching
-│   │   ├── services/
-│   │   │   ├── token_pool.py       # Multi-token round-robin pool
-│   │   │   ├── session_store.py    # Session persistence (JSON files)
-│   │   │   ├── usage_tracker.py    # Per-model/key/token usage stats
-│   │   │   ├── api_key_store.py    # Managed API key CRUD
-│   │   │   └── user_store.py       # Admin user management
-│   │   ├── api/
-│   │   │   ├── openai/chat.py      # POST /openai/v1/chat/completions
-│   │   │   ├── openai/models.py    # GET /openai/v1/models
-│   │   │   ├── anthropic/messages.py # POST /anthropic/v1/messages
-│   │   │   ├── admin.py            # Token/key management endpoints
-│   │   │   ├── sessions.py         # Session CRUD + continue-chat
-│   │   │   └── stats.py            # Usage statistics endpoint
-│   │   └── schemas/
-│   │       ├── openai.py           # OpenAI Pydantic models
-│   │       └── anthropic.py        # Anthropic Pydantic models
-│   └── tests/
-├── frontend/
-│   └── src/
-│       ├── pages/
-│       │   ├── DashboardPage.tsx    # Usage stats, charts, model list
-│       │   ├── PlaygroundPage.tsx   # Interactive chat testing
-│       │   ├── SessionsPage.tsx     # Session audit viewer
-│       │   ├── SettingsPage.tsx     # Token & API key management
-│       │   └── ...
-│       ├── contexts/I18nContext.tsx  # EN/ZH internationalization
-│       └── services/api.ts         # Centralized API client
-├── docs/                           # This documentation
-├── presentations/                  # Challenge presentation deck
-└── AGENTS.md                       # Multi-agent development architecture
+├── src/
+│   ├── backend/
+│   │   ├── app/
+│   │   │   ├── main.py                 # FastAPI app, lifespan, routing
+│   │   │   ├── core/
+│   │   │   │   ├── config.py           # Settings (pydantic-settings)
+│   │   │   │   ├── auth.py             # Multi-method authentication
+│   │   │   │   ├── dependencies.py     # DI: provider selection, token pool
+│   │   │   │   └── runtime_config.py   # Dynamic runtime configuration
+│   │   │   ├── providers/
+│   │   │   │   ├── base.py             # Abstract Provider interface
+│   │   │   │   └── copilot.py          # CopilotProvider + quota fetching
+│   │   │   ├── services/
+│   │   │   │   ├── token_pool.py       # Multi-token round-robin pool
+│   │   │   │   ├── session_store.py    # Session persistence (JSON files)
+│   │   │   │   ├── usage_tracker.py    # Per-model/key/token usage stats
+│   │   │   │   ├── api_key_store.py    # Managed API key CRUD
+│   │   │   │   └── user_store.py       # Admin user management
+│   │   │   ├── api/
+│   │   │   │   ├── openai/chat.py      # POST /openai/v1/chat/completions
+│   │   │   │   ├── openai/models.py    # GET /openai/v1/models
+│   │   │   │   ├── anthropic/messages.py # POST /anthropic/v1/messages
+│   │   │   │   ├── admin.py            # Token/key management endpoints
+│   │   │   │   ├── sessions.py         # Session CRUD + continue-chat
+│   │   │   │   └── stats.py            # Usage statistics endpoint
+│   │   │   └── schemas/
+│   │   │       ├── openai.py           # OpenAI Pydantic models
+│   │   │       └── anthropic.py        # Anthropic Pydantic models
+│   │   └── tests/
+│   └── frontend/
+│       └── src/
+│           ├── pages/
+│           │   ├── DashboardPage.tsx    # Usage stats, charts, model list
+│           │   ├── PlaygroundPage.tsx   # Interactive chat testing
+│           │   ├── SessionsPage.tsx     # Session audit viewer
+│           │   ├── SettingsPage.tsx     # Token & API key management
+│           │   └── ...
+│           ├── contexts/I18nContext.tsx  # EN/ZH internationalization
+│           └── services/api.ts         # Centralized API client
+├── docs/                               # Documentation
+├── presentations/                      # Challenge presentation deck
+└── AGENTS.md                           # Multi-agent development architecture
 ```
 
 ---

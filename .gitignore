@@ -211,7 +211,6 @@ __marimo__/
 node_modules/
 
 *claude*
-AGENTS.md
 .github
 .env.development
 

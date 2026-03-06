@@ -16,7 +16,7 @@ import logging
 import time
 from collections.abc import AsyncGenerator
 
-from backend.app.providers.base import (
+from src.backend.app.providers.base import (
     ChatCompletionRequest,
     ChatCompletionResponse,
     Provider,

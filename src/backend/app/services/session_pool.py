@@ -23,6 +23,8 @@ import asyncio
 import logging
 from typing import Any
 
+from copilot.types import PermissionHandler
+
 logger = logging.getLogger(__name__)
 
 
@@ -85,7 +87,11 @@ class SessionPool:
         await self._semaphore.acquire()
 
         try:
-            session_config: dict[str, Any] = {"model": model, **kwargs}
+            session_config: dict[str, Any] = {
+                "model": model,
+                "on_permission_request": PermissionHandler.approve_all,
+                **kwargs,
+            }
             session = await self._client.create_session(session_config)
         except Exception:
             # Release the semaphore slot since we failed to create a session.

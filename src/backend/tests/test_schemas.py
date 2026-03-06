@@ -8,7 +8,7 @@ required fields, apply defaults, and round-trip through JSON serialization.
 import pytest
 from pydantic import ValidationError
 
-from backend.app.schemas.openai import (
+from src.backend.app.schemas.openai import (
     ChatCompletionChunk,
     ChatCompletionRequest,
     ChatCompletionResponse,
@@ -23,7 +23,7 @@ from backend.app.schemas.openai import (
     ModelObject,
     Usage,
 )
-from backend.app.schemas.anthropic import (
+from src.backend.app.schemas.anthropic import (
     AnthropicErrorDetail,
     AnthropicErrorResponse,
     AnthropicUsage,

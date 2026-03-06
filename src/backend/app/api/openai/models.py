@@ -11,10 +11,10 @@ import time
 from fastapi import APIRouter, Depends
 from fastapi.responses import JSONResponse
 
-from backend.app.core.auth import AuthInfo, verify_api_key
-from backend.app.core.dependencies import get_provider
-from backend.app.providers.base import Provider
-from backend.app.schemas.openai import (
+from src.backend.app.core.auth import AuthInfo, verify_api_key
+from src.backend.app.core.dependencies import get_provider
+from src.backend.app.providers.base import Provider
+from src.backend.app.schemas.openai import (
     ErrorDetail,
     ErrorResponse,
     ModelList,

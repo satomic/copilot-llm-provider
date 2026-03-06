@@ -11,14 +11,14 @@ import time
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import StreamingResponse
 
-from backend.app.core.auth import AuthInfo, verify_api_key
-from backend.app.core.dependencies import get_provider
-from backend.app.providers.base import (
+from src.backend.app.core.auth import AuthInfo, verify_api_key
+from src.backend.app.core.dependencies import get_provider
+from src.backend.app.providers.base import (
     ChatCompletionRequest as InternalRequest,
     ChatMessage,
     Provider,
 )
-from backend.app.services.session_store import SessionRecord, get_session_store
+from src.backend.app.services.session_store import SessionRecord, get_session_store
 from pydantic import BaseModel, Field
 
 logger = logging.getLogger(__name__)

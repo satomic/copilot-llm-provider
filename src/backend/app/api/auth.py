@@ -13,7 +13,7 @@ import logging
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field
 
-from backend.app.services.user_store import get_user_store
+from src.backend.app.services.user_store import get_user_store
 
 logger = logging.getLogger(__name__)
 

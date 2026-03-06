@@ -18,7 +18,7 @@ from pathlib import Path
 from threading import Lock
 from uuid import uuid4
 
-from backend.app.providers.copilot import CopilotProvider
+from src.backend.app.providers.copilot import CopilotProvider
 
 logger = logging.getLogger(__name__)
 

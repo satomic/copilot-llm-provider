@@ -4,8 +4,8 @@ Usage statistics endpoints.
 
 from fastapi import APIRouter, Depends
 
-from backend.app.core.auth import AuthInfo, verify_api_key
-from backend.app.services.usage_tracker import get_usage_tracker
+from src.backend.app.core.auth import AuthInfo, verify_api_key
+from src.backend.app.services.usage_tracker import get_usage_tracker
 
 router = APIRouter(prefix="/api/stats", tags=["Stats"])
 

@@ -12,7 +12,7 @@ import asyncio
 import logging
 import time
 
-from backend.app.providers.base import ModelInfo, Provider
+from src.backend.app.providers.base import ModelInfo, Provider
 
 logger = logging.getLogger(__name__)
 

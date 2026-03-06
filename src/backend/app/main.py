@@ -16,19 +16,19 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
-from backend.app.core.dependencies import get_settings
-from backend.app.core.logging import setup_logging
-from backend.app.providers.copilot import CopilotProvider
-from backend.app.services.token_pool import get_token_pool
+from src.backend.app.core.dependencies import get_settings
+from src.backend.app.core.logging import setup_logging
+from src.backend.app.providers.copilot import CopilotProvider
+from src.backend.app.services.token_pool import get_token_pool
 
 # Import routers
-from backend.app.api.openai.chat import router as openai_chat_router
-from backend.app.api.openai.models import router as openai_models_router
-from backend.app.api.anthropic.messages import router as anthropic_messages_router
-from backend.app.api.admin import router as admin_router
-from backend.app.api.auth import router as auth_router
-from backend.app.api.sessions import router as sessions_router
-from backend.app.api.stats import router as stats_router
+from src.backend.app.api.openai.chat import router as openai_chat_router
+from src.backend.app.api.openai.models import router as openai_models_router
+from src.backend.app.api.anthropic.messages import router as anthropic_messages_router
+from src.backend.app.api.admin import router as admin_router
+from src.backend.app.api.auth import router as auth_router
+from src.backend.app.api.sessions import router as sessions_router
+from src.backend.app.api.stats import router as stats_router
 
 logger = logging.getLogger(__name__)
 

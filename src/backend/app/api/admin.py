@@ -13,10 +13,10 @@ import logging
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 
-from backend.app.core.auth import AuthInfo, verify_api_key
-from backend.app.core.runtime_config import get_runtime_config
-from backend.app.services.api_key_store import get_api_key_store
-from backend.app.services.token_pool import get_token_pool
+from src.backend.app.core.auth import AuthInfo, verify_api_key
+from src.backend.app.core.runtime_config import get_runtime_config
+from src.backend.app.services.api_key_store import get_api_key_store
+from src.backend.app.services.token_pool import get_token_pool
 
 logger = logging.getLogger(__name__)
 

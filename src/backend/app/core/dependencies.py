@@ -11,8 +11,8 @@ from functools import lru_cache
 
 from fastapi import HTTPException, Request
 
-from backend.app.core.config import Settings
-from backend.app.providers.base import Provider
+from src.backend.app.core.config import Settings
+from src.backend.app.providers.base import Provider
 
 logger = logging.getLogger(__name__)
 
@@ -45,7 +45,7 @@ async def get_provider(request: Request) -> Provider:
     Raises:
         HTTPException: 503 if no provider is available.
     """
-    from backend.app.services.token_pool import get_token_pool
+    from src.backend.app.services.token_pool import get_token_pool
 
     # Check for explicit token selection via header
     requested_token_id = request.headers.get("X-GitHub-Token-Id")

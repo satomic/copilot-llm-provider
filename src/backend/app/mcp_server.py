@@ -18,8 +18,8 @@ from contextlib import asynccontextmanager
 
 from mcp.server.fastmcp import FastMCP
 
-from backend.app.providers.base import ChatCompletionRequest, ChatMessage
-from backend.app.services.token_pool import get_token_pool
+from src.backend.app.providers.base import ChatCompletionRequest, ChatMessage
+from src.backend.app.services.token_pool import get_token_pool
 
 # Redirect logging to stderr (stdout is reserved for JSON-RPC in stdio transport)
 logging.basicConfig(

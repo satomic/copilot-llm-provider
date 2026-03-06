@@ -17,8 +17,9 @@ from collections.abc import AsyncGenerator
 from uuid import uuid4
 
 from copilot import CopilotClient
+from copilot.types import PermissionHandler
 
-from backend.app.providers.base import (
+from src.backend.app.providers.base import (
     ChatCompletionRequest,
     ChatCompletionResponse,
     ChatMessage,
@@ -373,6 +374,7 @@ class CopilotProvider(Provider):
             session = await client.create_session({
                 "model": resolved_model,
                 "available_tools": [],
+                "on_permission_request": PermissionHandler.approve_all,
                 "hooks": {"on_pre_tool_use": _deny_all_tools},
                 "system_message": {
                     "mode": "append",
@@ -461,6 +463,7 @@ class CopilotProvider(Provider):
                 "model": resolved_model,
                 "streaming": True,
                 "available_tools": [],
+                "on_permission_request": PermissionHandler.approve_all,
                 "hooks": {"on_pre_tool_use": _deny_all_tools},
                 "system_message": {
                     "mode": "append",

@@ -18,20 +18,20 @@ from typing import Any
 from fastapi import APIRouter, Depends, Request
 from fastapi.responses import JSONResponse, StreamingResponse
 
-from backend.app.core.auth import (
+from src.backend.app.core.auth import (
     AuthInfo,
     check_model_permission,
     check_usage_limits,
     record_api_key_usage,
     verify_api_key,
 )
-from backend.app.core.dependencies import get_provider
-from backend.app.providers.base import (
+from src.backend.app.core.dependencies import get_provider
+from src.backend.app.providers.base import (
     ChatCompletionRequest as InternalRequest,
     ChatMessage,
     Provider,
 )
-from backend.app.schemas.anthropic import (
+from src.backend.app.schemas.anthropic import (
     AnthropicErrorDetail,
     AnthropicErrorResponse,
     AnthropicUsage,
@@ -48,8 +48,8 @@ from backend.app.schemas.anthropic import (
     PingEvent,
     TextBlock,
 )
-from backend.app.services.session_store import SessionRecord, get_session_store
-from backend.app.services.usage_tracker import get_usage_tracker
+from src.backend.app.services.session_store import SessionRecord, get_session_store
+from src.backend.app.services.usage_tracker import get_usage_tracker
 
 logger = logging.getLogger(__name__)
 
@@ -639,7 +639,7 @@ async def create_message(
 
     # Track premium request on the token pool
     if is_premium and github_token_id:
-        from backend.app.services.token_pool import get_token_pool
+        from src.backend.app.services.token_pool import get_token_pool
         get_token_pool().record_premium_request(github_token_id)
 
     # Build internal request with tool-aware prompt when tools are present

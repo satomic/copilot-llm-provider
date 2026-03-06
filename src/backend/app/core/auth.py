@@ -13,10 +13,10 @@ from dataclasses import dataclass
 
 from fastapi import HTTPException, Request
 
-from backend.app.core.dependencies import get_settings
-from backend.app.core.runtime_config import get_runtime_config
-from backend.app.services.api_key_store import get_api_key_store
-from backend.app.services.user_store import get_user_store
+from src.backend.app.core.dependencies import get_settings
+from src.backend.app.core.runtime_config import get_runtime_config
+from src.backend.app.services.api_key_store import get_api_key_store
+from src.backend.app.services.user_store import get_user_store
 
 logger = logging.getLogger(__name__)
 

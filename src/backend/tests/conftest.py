@@ -11,9 +11,9 @@ from unittest.mock import AsyncMock
 import pytest
 from httpx import ASGITransport, AsyncClient
 
-from backend.app.core.config import Settings
-from backend.app.core.dependencies import get_provider, get_settings
-from backend.app.providers.base import (
+from src.backend.app.core.config import Settings
+from src.backend.app.core.dependencies import get_provider, get_settings
+from src.backend.app.providers.base import (
     ChatCompletionRequest,
     ChatCompletionResponse,
     ModelInfo,
@@ -177,14 +177,14 @@ def _build_app_with_overrides(
     """
     from unittest.mock import patch
 
-    from backend.app.main import create_app
+    from src.backend.app.main import create_app
 
     # Clear the lru_cache so the next call to get_settings() builds fresh.
     get_settings.cache_clear()
 
     # Patch Settings() constructor to return our test settings, then call
     # get_settings() once to populate the lru_cache with the test instance.
-    with patch("backend.app.core.dependencies.Settings", return_value=test_settings):
+    with patch("src.backend.app.core.dependencies.Settings", return_value=test_settings):
         cached = get_settings()  # Seeds the lru_cache with test_settings
     assert cached is test_settings
 
