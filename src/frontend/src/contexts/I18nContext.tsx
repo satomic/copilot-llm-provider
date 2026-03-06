@@ -262,6 +262,10 @@ const translations: Record<Locale, Record<string, string>> = {
 
     // Dashboard — token usage
     "dashboard.tokenUsage": "GitHub Token Usage",
+
+    // External links
+    "links.github": "GitHub Repo",
+    "links.feedback": "Feedback",
   },
   zh: {
     // App
@@ -512,6 +516,10 @@ const translations: Record<Locale, Record<string, string>> = {
 
     // Dashboard — token usage
     "dashboard.tokenUsage": "GitHub Token 用量",
+
+    // External links
+    "links.github": "GitHub 仓库",
+    "links.feedback": "反馈建议",
   },
 };
 
