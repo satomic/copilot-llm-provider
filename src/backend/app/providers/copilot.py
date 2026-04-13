@@ -17,6 +17,7 @@ from collections.abc import AsyncGenerator
 from uuid import uuid4
 
 from copilot import CopilotClient
+from copilot.client import SubprocessConfig
 from copilot.types import PermissionHandler
 
 from src.backend.app.providers.base import (
@@ -148,13 +149,14 @@ class CopilotProvider(Provider):
 
         # Build client config: pass token explicitly if provided, otherwise
         # let the SDK fall back to env vars / stored OAuth credentials.
-        config: dict[str, str] = {}
+        config_kwargs: dict = {}
         if self._github_token:
-            config["github_token"] = self._github_token
+            config_kwargs["github_token"] = self._github_token
+        else:
+            config_kwargs["use_logged_in_user"] = True
 
         try:
-            # Always ensure use_logged_in_user is enabled for stored OAuth
-            config.setdefault("use_logged_in_user", True)
+            config = SubprocessConfig(**config_kwargs)
             self._client = CopilotClient(config)
             await self._client.start()
             self._started = True
@@ -371,18 +373,18 @@ class CopilotProvider(Provider):
 
         session = None
         try:
-            session = await client.create_session({
-                "model": resolved_model,
-                "available_tools": [],
-                "on_permission_request": PermissionHandler.approve_all,
-                "hooks": {"on_pre_tool_use": _deny_all_tools},
-                "system_message": {
+            session = await client.create_session(
+                model=resolved_model,
+                available_tools=[],
+                on_permission_request=PermissionHandler.approve_all,
+                hooks={"on_pre_tool_use": _deny_all_tools},
+                system_message={
                     "mode": "append",
                     "content": _TOOL_BRIDGE_SYSTEM_MSG,
                 },
-            })
+            )
             response = await session.send_and_wait(
-                {"prompt": prompt}, timeout=_DEFAULT_TIMEOUT
+                prompt, timeout=_DEFAULT_TIMEOUT
             )
 
             # Extract content from the SDK response object.
@@ -459,17 +461,17 @@ class CopilotProvider(Provider):
 
         session = None
         try:
-            session = await client.create_session({
-                "model": resolved_model,
-                "streaming": True,
-                "available_tools": [],
-                "on_permission_request": PermissionHandler.approve_all,
-                "hooks": {"on_pre_tool_use": _deny_all_tools},
-                "system_message": {
+            session = await client.create_session(
+                model=resolved_model,
+                streaming=True,
+                available_tools=[],
+                on_permission_request=PermissionHandler.approve_all,
+                hooks={"on_pre_tool_use": _deny_all_tools},
+                system_message={
                     "mode": "append",
                     "content": _TOOL_BRIDGE_SYSTEM_MSG,
                 },
-            })
+            )
 
             def on_event(event: object) -> None:
                 """SDK event callback — bridges events into the async queue."""
@@ -524,7 +526,7 @@ class CopilotProvider(Provider):
                     queue.put_nowait(_DONE)
 
             session.on(on_event)
-            await session.send({"prompt": prompt})
+            await session.send(prompt)
 
             # Yield deltas from the queue until we receive the done sentinel.
             while True:
